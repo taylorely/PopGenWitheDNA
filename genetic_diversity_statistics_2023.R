@@ -4,30 +4,31 @@
 #This code uses the following outputs from bioinformatics: 
 #1) the haplo table output from the denoising step of JAMP 
 #2) a tab file from ecotag/obitools
-#3) a file created from taking the top match from blastn search using blastn -remote and awk code (awk 'c&&!--c;/Query/{printf "%s	%s", $0, c=5}' Oahu_BigIsland2022_cytb_blastresults_zizka.txt >> Oahu_BigIsland2022_cytb_blastresults_zizka_awk.txt). Make sure to use find and replace to remove "# Query: " from each line
+#3) a file created from taking the top match from blastn search using blastn -remote and awk code (awk 'c&&!--c;/Query/{printf "%s	%s", $0, c=5}' input.txt >> output.txt). Make sure to use find and replace to remove "# Query: " from each line
 #4) an alignment file created after the first function load_species(). You can also just check to see if they are already aligned. In that case just load the fasta file created by load_species()
 
 #With these outputs you also need more info about your data:  ###Side note: Make sure these are correct. Often there is an error because the sample name in the metadata file did not match the sample names in the JAMP output so double check this is correct. 
 #1) a metadata file that links the sample names to Site, Island, Region, Side of the island, and year
-#2) a metadata file that list species with previous data on them
 
-#For functions you need to include the following inputs (and the files mentioned above)
+
+#For functions you often need to include the following inputs (and the files mentioned above)
 #1) runname or whatever you want to be a name modifier for your run so you don't overwrite different runs
-#2) if you are comparing by OTU or species match (choose from "OTU" or "SpeciesName") (species is still not working, use OTU for now)
+#2) right now the code only works for using OTUs but code easily modify for species (choose from "OTU" or "SpeciesName") 
 #3) what is the lowest taxonomy match you want to keep, this is to remove things that don't match well to anything and are likely bacteria or other non-target taxa
 #4) lowest number of reads you want to keep, usually pick something from 1-10, this is to remove potential false positives
 #5) number of blanks
 #6) number of samples
 #7) the folder that you want all files saved to. If you aren't doing multiple analyses just set to the same as working directory
-#9) What frame the amino acids start on 
+#9) What frame the codon starts on 
 #10) What your limit is for low sample size per population
 #11) How you want to scale the reads for converting to a 0-4 scale (e.g. Turon et al. 2020 used <0.5,0.5<x<0.75, 0.75<x<0.9, >0.9  to divide into 0-4 scale)
 #12) if you want to remove first nucleotide (TRUE or FALSE). Because of sequencing error this was often a change never observed in haplotypes extracted from tissue
+#13) this code is meant for when you have multiple levels of population (Island vs side of the Island) so you sometimes have to set what population you are using
 
 ### note if having issues ##### There are some package issues with phyloseq and these ones so clear your environment and History or restart your R session if there are issues ########
 
 ################### Here is where the code starts ######################
-# load libraries
+# load libraries (not sure if all of these are still needed)
 library("dplyr")
 library("ape")
 library("pegas")
@@ -46,7 +47,7 @@ library("hierfstat")
 library("adegenet")
 library("graph4lg")
 library("vegan")
-#library("phyloseq")
+library("phyloseq")
 library("ape")
 library("ggplot2")
 library("treemapify")
@@ -54,8 +55,11 @@ library("plyr")
 library("poppr")
 library("tidyr")
 
-#here are the functions
-load_species<-function(metadata,table,obitools,blast,lowestmatch,lowestreads,OTUvsspecies,folder,nblanks,nsamples,runname,scaled1,scaled2,scaled3,removefirstbp){
+################## here are the many functions #######################
+
+#### functions for formating data
+#load data and create dataframes and create proxies for individuals
+load_species<-function(metadata,table,obitools,blast,lowestmatch,lowestreads,OTUvsspecies="OTU",folder,nblanks,nsamples,runname,scaled1,scaled2,scaled3,removefirstbp){
   ########### reformatting ############
   #remove blanks and create a subset file to see what had contamination
   if (nblanks > 0) {
@@ -263,7 +267,6 @@ load_species<-function(metadata,table,obitools,blast,lowestmatch,lowestreads,OTU
   assign(  paste("combinedraw", runname, sep = ""), combinedraw, envir = parent.frame())
   assign(  paste("combined_rare", runname, sep = ""), combined_rare, envir = parent.frame())
 }
-
 #for raw reads I need to reduce some species so that the functions don't run out of memory
 reducereads<-function(datafile,nsamp,alignment,runname,folder,metadata){
   otus<-unique(datafile$OTU)
@@ -312,7 +315,7 @@ reducereads<-function(datafile,nsamp,alignment,runname,folder,metadata){
   popgen_reduced<<-popgen_new
   write.csv(popgen_new,file = paste(folder,"/",runname,"popgen_noSC_reduced.csv",sep = ""))
 }
-
+#remove stop codons
 remove_stop_codons<-function(alignment,presenceabsence,rarefied,normalized,alldata,runname,frame1,numcode1,folder){
   #remove sequences with stop codons as they are errors, psuedogenes, or numts
   i<-1
@@ -348,9 +351,8 @@ remove_stop_codons<-function(alignment,presenceabsence,rarefied,normalized,allda
   assign(  paste("final_combined", runname, sep = ""), alldata, envir = parent.frame())
   write.csv(alldata,file = paste(folder,"/",runname,"species_haplotype_table_filtered_noSC.csv",sep = ""))
 }
-
-# This function needs to be changed based on the populations that you are using
-summary_eDNA<-function(OTUvsspecies,presenceabsence,rarefied,normalized,runname,nhap,folder,haplorestrict){
+# Summarize how many haplotypes and haplotype counts per species, population, and with different proxies; This also creates files needed for popgen formulas
+summary_eDNA<-function(OTUvsspecies="OTU",presenceabsence,rarefied,normalized,runname,nhap,folder,haplorestrict){
   ########### Summary for presence absence dataset ##########
   otus<-unique(presenceabsence[[OTUvsspecies]])
   summary_pa<-data.frame(matrix(ncol = 18, nrow = 0))
@@ -562,322 +564,7 @@ summary_eDNA<-function(OTUvsspecies,presenceabsence,rarefied,normalized,runname,
   assign(  paste("popgen_r_region", runname, sep = ""), popgen_r_region, envir = parent.frame())
   assign(  paste("popgen_n_region", runname, sep = ""), popgen_n_region, envir = parent.frame())
 }
-
-eDNA_haplotypes_pairphi<-function(OTUvsspecies,folder,datafile,runname,order,numperm,nind,popcolname,haplorestrict){
-  folder_name2<-paste(folder,"/PhiStats",runname,"/",sep = "")
-  dir.create(folder_name2)
-  otus<-unique(datafile[[OTUvsspecies]])
-  i<-1
-  for (i in 1:length(otus)){
-    temp2 <- datafile[datafile[[OTUvsspecies]]==otus[i],] #subet one OTU at a time
-    #identify any populations with less than nind individuals
-    populations<-popcolname
-    ind<-data.frame(table(temp2[[popcolname]])) # count number of occurances for each of the populations
-    colnames(ind)<-c("site","ind") # rename the columns
-    ind$ind<-as.numeric(ind$ind) # make number of individuals into a numeric
-    lowpop<-as.vector(ind$site[ind$ind<nind])
-    #remove any populations with less than nind individuals
-    if(length(lowpop)!=0){
-    i<-1
-    for (i in 1:length(lowpop)){
-      temp2<-temp2[(temp2[[popcolname]] != lowpop[i]),]
-    }}
-    #only keep haplotypes with at least 2 occurances
-    if(haplorestrict==TRUE){
-      temp3<-count(temp2$haplotype)
-      temp3<-temp3[(temp3$freq==1),]
-      i<-1
-      lowhaplo<-temp3$x
-      for (i in 1:length(lowhaplo)){
-        temp2<-temp2[(temp2$haplotype != lowhaplo[i]),]
-      }
-    }
-    if(length(unique(temp2[[popcolname]]))>1){
-    #if subsample=TRUE then subsample if one population is more than double the other
-    #if(subsample==TRUE){
-      
-    #}
-    #convert DNA seqs to format for pairphist
-    y <- as.list(temp2$sequences)
-    y <- as.DNAbin(ape::as.alignment(y))
-    z <- as.dna(y)
-    #identify populations for testing
-    Island<-temp2[[popcolname]]
-    #calculate phist and p-values
-    pst<-pairPhiST(z, Island, nperm=numperm, negatives=TRUE, showprogbar=FALSE) #calculates distance in code
-    #How to create a prettier table
-    #remove pops that it did not occur in
-    i_order<-order
-    pops<-unique(temp2[[popcolname]])
-    nopops<-setdiff(i_order, pops)
-    if(length(nopops)!=0){
-      i<-1
-      for (i in 1:length(nopops)){
-        i_order<-i_order[(i_order != nopops[i])]
-      }}
-    #first start with reordering phist
-    pst_test<-as.matrix(pst$PhiST) #convert to matrix
-    pst_test[upper.tri(pst_test)] <- t(pst_test)[upper.tri(pst_test)] #copy so symmetrical 
-    phist_reordered <- reorder_mat(mat = pst_test, order = i_order) #reorder
-    #second reorder p-value
-    pst_test2<-as.matrix(pst$p) #convert to matrix
-    pst_test2[upper.tri(pst_test2)] <- t(pst_test2)[upper.tri(pst_test2)] #copy so symmetrical 
-    pvalue_reordered <- reorder_mat(mat = pst_test2, order = i_order) #reorder
-    #now merge the two halves together
-    phist_reordered[upper.tri(phist_reordered)] <- pvalue_reordered[upper.tri(pvalue_reordered)]
-    write.csv(phist_reordered, file = paste(folder_name2, temp2$Scientific_name[1],"_",temp2$best_identity[1],"_",temp2$blastlowest[1],"_",temp2$OTU[1],"_",runname, "_phistat.csv", sep=""))
-      } }
-}
-
-statstable<-function(folder,datafile,runname,popcolname){
-  otus<-unique(datafile$OTU)
-  summary_stats<-data.frame(matrix(ncol = 15, nrow = 0))
-  i<-1
-  for (i in 1:length(otus)){
-  temp <- datafile[datafile$OTU==otus[i],]
-  pops<-unique(temp[[popcolname]])
-  x <- as.list(temp$sequences)
-  x <- as.DNAbin(ape::as.alignment(x))
-  h <- pegas::haplotype(x)
-  N<-nrow(temp)
-  H<-length(unique(temp$sequences))
-  nd<-nuc.div(h,variance=TRUE) 
-  nd_var<-paste(round(nd[1],digits = 4),format(round(nd[2],digits = 6),scientific=FALSE),sep = " ± ")
-  hd<-hap.div(h,variance=TRUE)
-  hd_var<-paste(round(hd[1],digits = 3),round(hd[2],digits = 3),sep = " ± ")
-  tajima<-tajima.test(x) 
-  population<-"overall"
-  m<-x <- as.matrix(x)
-  if(H>1){
-    theta<-1
-    B<-1000
-    if (is.list(x)) x <- as.matrix(x)
-    n <- dim(x)[1]
-    k <- mean(dist.dna(x, "N"))
-    ss <- seg.sites(x)
-    U <- numeric(n)
-    for (i in 1:n) for (j in ss)
-      if (all(x[i, j, drop = TRUE] != x[-i, j])) U[i] <- U[i] + 1
-    U <- (U - k/2)^2
-    R2.obs <- sqrt(sum(U)/n)/length(ss)
-    B<-1000
-    R <- numeric(B)
-    for (b in 1:B) {
-      tr <- rcoal(n, rep("", n))
-      tr$edge.length <- rpois(2*n - 2, theta * tr$edge.length)
-      d <- cophenetic(tr)
-      k <- mean(d)
-      U <- tr$edge.length[tr$edge[, 2] <= n]
-      U <- (U - k/2)^2
-      R[b] <- sqrt(sum(U)/n)/sum(tr$edge.length)
-    }
-    R <- na.omit(R)
-    R2_value<-round(R2.obs,digits = 3)
-    R2_P = sum(R < R2.obs)/length(R)
-    R2_P = round(R2_P,digits = 3)
-  }else{
-    R2_value<-"NA"
-    R2_p<-"NA"
-  }
-  basicstats<-c(temp$Scientific_name[1],temp$blastlowest[1],temp$OTU[1],population,N,H,hd_var,nd_var,round(tajima$D,digits = 3),R2_value,tajima$Pval.normal,R2_P,tajima$Pval.beta,hd[1],nd[1])
-  summary_stats<-rbind(summary_stats,basicstats)
-  i<-1
-  for (i in 1:length(pops)){
-    temp2 <- temp[temp[[popcolname]]==pops[i],]
-    x <- as.list(temp2$sequences)
-    x <- as.DNAbin(ape::as.alignment(x))
-    h <- pegas::haplotype(x)
-    N<-nrow(temp2)
-    H<-length(unique(temp2$sequences))
-    nd<-nuc.div(h,variance=TRUE) 
-    nd_var<-paste(round(nd[1],digits = 4),format(round(nd[2],digits = 6),scientific=F),sep = " ± ")
-    hd<-hap.div(h,variance=TRUE)
-    hd_var<-paste(round(hd[1],digits = 3),round(hd[2],digits = 3),sep = " ± ")
-    tajima<-tajima.test(x) 
-    population<-as.character(temp2[[popcolname]][1])
-    m<-x <- as.matrix(x)
-    if(H>1){
-      theta<-1
-      B<-1000
-      if (is.list(x)) x <- as.matrix(x)
-      n <- dim(x)[1]
-      k <- mean(dist.dna(x, "N"))
-      ss <- seg.sites(x)
-      U <- numeric(n)
-      for (i in 1:n) for (j in ss)
-        if (all(x[i, j, drop = TRUE] != x[-i, j])) U[i] <- U[i] + 1
-      U <- (U - k/2)^2
-      R2.obs <- sqrt(sum(U)/n)/length(ss)
-      B<-1000
-      R <- numeric(B)
-      for (b in 1:B) {
-        tr <- rcoal(n, rep("", n))
-        tr$edge.length <- rpois(2*n - 2, theta * tr$edge.length)
-        d <- cophenetic(tr)
-        k <- mean(d)
-        U <- tr$edge.length[tr$edge[, 2] <= n]
-        U <- (U - k/2)^2
-        R[b] <- sqrt(sum(U)/n)/sum(tr$edge.length)
-      }
-      R <- na.omit(R)
-      R2_value<-round(R2.obs,digits = 3)
-      R2_P = sum(R < R2.obs)/length(R)
-      R2_P = round(R2_P,digits = 3)
-    }else{
-      R2_value<-"NA"
-      R2_p<-"NA"
-    }
-    basicstats<-c(temp2$Scientific_name[1],temp2$blastlowest[1],temp2$OTU[1],population,N,H,hd_var,nd_var,round(tajima$D,digits = 3),R2_value,tajima$Pval.normal,R2_P,tajima$Pval.beta,hd[1],nd[1])
-    summary_stats<-rbind(summary_stats,basicstats)
-  }
-  colnames(summary_stats)<-c("Species","Blast Species","OTU","Population","Sample Size","Number of Haplotypes","hap div var","nuc div var","Tajima's D","R2","Tajima's D p-value","R2 p-value","Tajima's D p-value beta","haplotype diversity","nucleotide diversity")
-  }
-  write.csv(summary_stats, file = paste(folder,"/",runname,"_basic_seq_stats.csv", sep=""))
-}
-
-geneticstatstable<-function(folder,datafile,runname,popcolname){
-  otus<-unique(datafile$OTU)
-  genetic_stats<-data.frame(matrix(ncol = 8, nrow = 0))
-  i<-1
-  for (i in 1:length(otus)){
-    temp <- datafile[datafile$OTU==otus[i],]
-    pops<-unique(temp[[popcolname]])
-    x <- as.list(temp$sequences)
-    x <- as.DNAbin(ape::as.alignment(x))
-    h <- pegas::haplotype(x)
-    N<-nrow(temp)
-    H<-length(unique(temp$sequences))
-    nd<-nuc.div(h,variance=TRUE) 
-    nd_var<-paste(round(nd[1],digits = 4),format(round(nd[2],digits = 6),scientific=FALSE),sep = " ± ")
-    hd<-hap.div(h,variance=TRUE)
-    hd_var<-paste(round(hd[1],digits = 3),round(hd[2],digits = 6),sep = " ± ")
-    population<-"overall"
-    basicstats<-c(temp$Scientific_name[1],temp$blastlowest[1],temp$OTU[1],population,N,H,hd_var,nd_var)
-    genetic_stats<-rbind(genetic_stats,basicstats)
-    i<-1
-    for (i in 1:length(pops)){
-      temp2 <- temp[temp[[popcolname]]==pops[i],]
-      x <- as.list(temp2$sequences)
-      x <- as.DNAbin(ape::as.alignment(x))
-      h <- pegas::haplotype(x)
-      N<-nrow(temp2)
-      H<-length(unique(temp2$sequences))
-      nd<-nuc.div(h,variance=TRUE) 
-      nd_var<-paste(round(nd[1],digits = 4),format(round(nd[2],digits = 6),scientific=F),sep = " ± ")
-      hd<-hap.div(h,variance=TRUE)
-      hd_var<-paste(round(hd[1],digits = 3),round(hd[2],digits = 6),sep = " ± ")
-      population<-as.character(temp2[[popcolname]][1])
-      basicstats<-c(temp2$Scientific_name[1],temp2$blastlowest[1],temp2$OTU[1],population,N,H,hd_var,nd_var)
-      genetic_stats<-rbind(genetic_stats,basicstats)
-    }
-    colnames(genetic_stats)<-c("Species","Blast Species","OTU","Population","Sample Size","Number of Haplotypes","hap div var","nuc div var")
-  }
-  write.csv(genetic_stats, file = paste(folder,"/",runname,"_genetic_stats.csv", sep=""))
-}
-
-MMD_all<-function(folder,table,runname,popcolname){
-  folder_name<-paste(folder,"MMD_",runname,"/",sep = "")
-  dir.create(folder_name)
-  otus<-unique(table$OTU)
-  for (i in 1:length(otus)){
-    temp <- table[table$OTU==otus[i],]
-    y <- as.list(temp$sequences)
-    y <- as.DNAbin(ape::as.alignment(y))
-    d <- dist.dna(y, "N")
-    maxdist<-max(d)
-    if (maxdist > 0){
-    if(maxdist < 4) {maxdist<-4}
-    lcol = c("lightblue", "darkred")
-    lty = c(1, 1)
-    jpeg(file=paste(folder_name,temp$Scientific_name[1],"_",temp$best_identity[1],"_",temp$blastlowest[1],"_",temp$OTU[1],"_",runname,"_all_islands_MMD.jpeg",sep = ""), width=11, height=10, units = "in", res=400)
-    par(mar=c(5.1, 5.1, 4.1, 2.1))
-    h <- hist(d, xlab = "Number of Pairwise Differences",ylab="Frequency", main = "",xaxt = "n",cex.axis = 2, cex.lab = 2,  ylim = c(0,1), freq = FALSE,breaks = c(0:maxdist))
-    axis(1, at = c(0:maxdist),cex.axis = 2)
-    dd <- density(d, bw = 2)
-    lines(dd, col = lcol[1], lty = lty[1],lwd = 4)
-    ## by David Winter:
-    theta <- mean(d)
-    upper <- ceiling(max(d))
-    e <- sapply(0:upper, function(i) theta^i / (theta + 1)^(i + 1))
-    lines(e, col = lcol[2], lty = lty[2],lwd = 4)
-    rug(d)
-    psr <- par("usr")
-    xx <- psr[2]/2
-    yy <- psr[4] * (0.5 + 0.5/par("plt")[4])
-    legend(xx, yy, c("Empirical", "Stable expectation"),
-           lty = lty, col = lcol, bg = "white", lwd = 4,bty = "n",
-             xjust = 0.5, yjust = 0.5, horiz = TRUE, xpd = TRUE,cex=2)
-      #legend("topleft", c("Empirical", "Stable expectation"),
-      #       lty = 1, col = lcol, bg = "white", bty = "n")
-    invisible(list(histogram = h, empirical.density = dd, expected.curve = e))
-    dev.off()
-    }
-    pops<-unique(temp[[popcolname]])
-    for (i in 1:length(pops)){
-      temppop <- temp[temp[[popcolname]]==pops[i],]
-      y <- as.list(temppop$sequences)
-      y <- as.DNAbin(ape::as.alignment(y))
-      d <- dist.dna(y, "N")
-      maxdist<-max(d)
-      if(maxdist>0){
-      if(maxdist < 4) {maxdist<-4}
-      lcol = c("lightblue", "darkred")
-      lty = c(1, 1)
-      jpeg(file=paste(folder_name,temppop$Scientific_name[1],"_",temppop$best_identity[1],"_",temppop$blastlowest[1],"_",temppop$OTU[1],"_",runname,"_",temppop[[popcolname]][1],"_MMD.jpeg",sep = ""), width=11, height=10, units = "in", res=400)
-      par(mar=c(5.1, 5.1, 4.1, 2.1))
-      h <- hist(d, xlab = "Number of Pairwise Differences",ylab="Frequency", main = "",xaxt = "n",cex.axis = 2, ylim = c(0,1), cex.lab = 2, freq = FALSE,breaks = c(0:maxdist))
-      axis(1, at = c(0:maxdist),cex.axis = 2)
-      dd <- density(d, bw = 2)
-      lines(dd, col = lcol[1], lty = lty[1],lwd = 4)
-      ## by David Winter:
-      theta <- mean(d)
-      upper <- ceiling(max(d))
-      e <- sapply(0:upper, function(i) theta^i / (theta + 1)^(i + 1))
-      lines(e, col = lcol[2], lty = lty[2],lwd = 4)
-      rug(d)
-      psr <- par("usr")
-      xx <- psr[2]/2
-      yy <- psr[4] * (0.5 + 0.5/par("plt")[4])
-      legend(xx, yy, c("Empirical", "Stable expectation"),
-             lty = lty, col = lcol, bg = "white", lwd = 4,bty = "n",
-             xjust = 0.5, yjust = 0.5, horiz = TRUE, xpd = TRUE,cex=2)
-      #legend("topleft", c("Empirical", "Stable expectation"),
-      #       lty = 1, col = lcol, bg = "white", bty = "n")
-      invisible(list(histogram = h, empirical.density = dd, expected.curve = e))
-      dev.off()
-      }
-    }
-  } 
-}
-
-hapmap_all<-function(OTUvsspecies,table,runname,folder){
-  folder_name<-paste(folder,"/HaploNet_all_",runname,"/",sep = "")
-  dir.create(folder_name)
-  otus<-unique(table[[OTUvsspecies]])
-  
-  i<-1
-  for (i in 1:length(otus)){
-    temp <- table[table$OTU==otus[i],]
-    haplotypes<-unique(temp$haplotype)
-    if(length(haplotypes)>1){
-    y <- as.list(temp$sequences)
-    y <- as.DNAbin(ape::as.alignment(y))
-    h <- pegas::haplotype(y)
-    net <- haploNet(h)
-    
-    net[,3] <- net[,3] #-1
-    # print.default(net)
-    
-    R<-haploFreq(y, fac = temp$site, haplo = h)
-    
-    jpeg(file=paste(folder_name, otus[i],"_",temp$blastlowest[1], "_hapmap_all.jpg", sep=""), width=10, height=10, units = "in", res=400)
-    plot(net, size= attr(net, "freq"), scale.ratio = 2, cex = 0.8, pie = R)
-    legend("bottomleft", title="Island",legend=colnames(R), col=rainbow(ncol(R)), cex = 1.5,pch = 20)
-    dev.off()
-    }
-  } 
-}
-
+# to create a large fasta file
 fastafilealldata<-function(metadata,table,obitools,blast,lowestmatch,OTUvsspecies,folder,nblanks,nsamples,runname,removefirstbp,frame1,numcode1){
   ########### reformatting ############
   #remove blanks and create a subset file to see what had contamination
@@ -1001,8 +688,8 @@ fastafilealldata<-function(metadata,table,obitools,blast,lowestmatch,OTUvsspecie
     #write as fasta files
     write.fasta(sequences=seqs_fasta,names=names_fasta,file.out=paste(folder_name2,temp$Scientific_name[1],"_",temp$best_identity[1],"_",temp$blastspecies[1],"_",temp$blastpercent[1],"_",temp$OTU[1],"_",runname,".fasta",sep = ""))
   }
- }
-
+}
+# to create fasta files per species (these were used for running other programs like arlequin and DNASP)
 fastafilesperspecies<-function(datafile,popcolname,runname,folder){
   folder_name2<-paste(folder,"/fastafiles",runname,"/",sep = "")
   dir.create(folder_name2)
@@ -1012,15 +699,15 @@ fastafilesperspecies<-function(datafile,popcolname,runname,folder){
   i<-1
   for (i in 1:length(otus)){
     temp <- datafile[datafile$OTU==otus[i],]
-  #set sequences
-  seqs_fasta<-as.list(temp$sequences)
-  #set names ex: >OTU1 population:Oahu haplo_1
-  names_fasta<- as.list(paste(temp$OTU,"_",temp$ID," population:",temp[[popcolname]]," ",temp$haplotype, sep=""))
-  #write as fasta files
-  write.fasta(sequences=seqs_fasta,names=names_fasta,file.out=paste(folder_name2,temp$Scientific_name[1],"_",temp$best_identity[1],"_",temp$blastlowest[1],"_",temp$OTU[1],"_",runname,".fasta",sep = ""))
+    #set sequences
+    seqs_fasta<-as.list(temp$sequences)
+    #set names ex: >OTU1 population:Oahu haplo_1
+    names_fasta<- as.list(paste(temp$OTU,"_",temp$ID," population:",temp[[popcolname]]," ",temp$haplotype, sep=""))
+    #write as fasta files
+    write.fasta(sequences=seqs_fasta,names=names_fasta,file.out=paste(folder_name2,temp$Scientific_name[1],"_",temp$best_identity[1],"_",temp$blastlowest[1],"_",temp$OTU[1],"_",runname,".fasta",sep = ""))
   }
 }
-
+# to create fasta files per species and per population (these were used for running other programs like arlequin and DNASP)
 fastafilesperspeciesperpopulation<-function(datafile,popcolname,runname,folder){
   folder_name2<-paste(folder,"/fastafiles",runname,"/",sep = "")
   dir.create(folder_name2)
@@ -1038,34 +725,11 @@ fastafilesperspeciesperpopulation<-function(datafile,popcolname,runname,folder){
       #set names ex: >OTU1 population:Oahu haplo_1
       names_fasta<- as.list(paste(temp2$OTU,"_",temp2$ID," population:",temp2[[popcolname]]," ",temp2$haplotype, sep=""))
       #write as fasta files
-     write.fasta(sequences=seqs_fasta,names=names_fasta,file.out=paste(folder_name2,temp2$Scientific_name[1],"_",temp2$best_identity[1],"_",temp2$blastlowest[1],"_",temp2$OTU[1],"_",temp2[[popcolname]][1],"_",runname,".fasta",sep = ""))
+      write.fasta(sequences=seqs_fasta,names=names_fasta,file.out=paste(folder_name2,temp2$Scientific_name[1],"_",temp2$best_identity[1],"_",temp2$blastlowest[1],"_",temp2$OTU[1],"_",temp2[[popcolname]][1],"_",runname,".fasta",sep = ""))
     }
   }
 }
-
-samplesbyspecies<-function(folder,datafile,runname,popcolname){
-  otus<-unique(datafile$OTU)
-  speciestable<-data.frame(matrix(ncol = 7, nrow = 0))
-  i<-1
-  for (i in 1:length(otus)){
-    temp <- datafile[datafile$OTU==otus[i],]
-    pops<-unique(temp[[popcolname]])
-    i<-1
-    for (i in 1:length(pops)){
-      temp2 <- temp[temp[[popcolname]]==pops[i],]
-      population<-temp2[[popcolname]][1]
-      reads<-nrow(temp2)
-      samplenumb<-length(unique(temp2$variable))
-      haplosample<-paste(temp2$sequence,temp2$variable)
-      samplehaplonumb<-length(unique(haplosample))
-      basicstatssample<-c(temp2$Scientific_name[1],temp2$blastlowest[1],temp2$OTU[1],population,reads,samplenumb,samplehaplonumb)
-      speciestable<-rbind(speciestable,basicstatssample)
-    }
-    colnames(speciestable)<-c("Species","Blast Species","OTU","Population","Number of Reads","Number of Samples","Number of unique haplos and samples")
-  }
-  write.csv(speciestable, file = paste(folder,"/",runname,"_sample_stats.csv", sep=""))
-}
-
+#converts to nexus files for DNASP
 fastatonexus<-function(folderinput,folderoutput,runname){
   folder_name2<-paste(folderoutput,"/nexusfiles_",runname,"/",sep = "")
   dir.create(folder_name2)
@@ -1077,6 +741,255 @@ fastatonexus<-function(folderinput,folderoutput,runname){
   }
 }
 
+##### functions for population genetics and genetic diversity
+# for pairwise phist
+eDNA_haplotypes_pairphi<-function(OTUvsspecies="OTU",folder,datafile,runname,order,numperm,nind,popcolname,haplorestrict){
+  folder_name2<-paste(folder,"/PhiStats",runname,"/",sep = "")
+  dir.create(folder_name2)
+  otus<-unique(datafile[[OTUvsspecies]])
+  i<-1
+  for (i in 1:length(otus)){
+    temp2 <- datafile[datafile[[OTUvsspecies]]==otus[i],] #subet one OTU at a time
+    #identify any populations with less than nind individuals
+    populations<-popcolname
+    ind<-data.frame(table(temp2[[popcolname]])) # count number of occurances for each of the populations
+    colnames(ind)<-c("site","ind") # rename the columns
+    ind$ind<-as.numeric(ind$ind) # make number of individuals into a numeric
+    lowpop<-as.vector(ind$site[ind$ind<nind])
+    #remove any populations with less than nind individuals
+    if(length(lowpop)!=0){
+    i<-1
+    for (i in 1:length(lowpop)){
+      temp2<-temp2[(temp2[[popcolname]] != lowpop[i]),]
+    }}
+    #only keep haplotypes with at least 2 occurances
+    if(haplorestrict==TRUE){
+      temp3<-count(temp2$haplotype)
+      temp3<-temp3[(temp3$freq==1),]
+      i<-1
+      lowhaplo<-temp3$x
+      for (i in 1:length(lowhaplo)){
+        temp2<-temp2[(temp2$haplotype != lowhaplo[i]),]
+      }
+    }
+    if(length(unique(temp2[[popcolname]]))>1){
+    #if subsample=TRUE then subsample if one population is more than double the other
+    #if(subsample==TRUE){
+      
+    #}
+    #convert DNA seqs to format for pairphist
+    y <- as.list(temp2$sequences)
+    y <- as.DNAbin(ape::as.alignment(y))
+    z <- as.dna(y)
+    #identify populations for testing
+    Island<-temp2[[popcolname]]
+    #calculate phist and p-values
+    pst<-pairPhiST(z, Island, nperm=numperm, negatives=TRUE, showprogbar=FALSE) #calculates distance in code
+    #How to create a prettier table
+    #remove pops that it did not occur in
+    i_order<-order
+    pops<-unique(temp2[[popcolname]])
+    nopops<-setdiff(i_order, pops)
+    if(length(nopops)!=0){
+      i<-1
+      for (i in 1:length(nopops)){
+        i_order<-i_order[(i_order != nopops[i])]
+      }}
+    #first start with reordering phist
+    pst_test<-as.matrix(pst$PhiST) #convert to matrix
+    pst_test[upper.tri(pst_test)] <- t(pst_test)[upper.tri(pst_test)] #copy so symmetrical 
+    phist_reordered <- reorder_mat(mat = pst_test, order = i_order) #reorder
+    #second reorder p-value
+    pst_test2<-as.matrix(pst$p) #convert to matrix
+    pst_test2[upper.tri(pst_test2)] <- t(pst_test2)[upper.tri(pst_test2)] #copy so symmetrical 
+    pvalue_reordered <- reorder_mat(mat = pst_test2, order = i_order) #reorder
+    #now merge the two halves together
+    phist_reordered[upper.tri(phist_reordered)] <- pvalue_reordered[upper.tri(pvalue_reordered)]
+    write.csv(phist_reordered, file = paste(folder_name2, temp2$Scientific_name[1],"_",temp2$best_identity[1],"_",temp2$blastlowest[1],"_",temp2$OTU[1],"_",runname, "_phistat.csv", sep=""))
+      } }
+}
+# for sequence diversity statistics
+statstable<-function(folder,datafile,runname,popcolname){
+  otus<-unique(datafile$OTU)
+  summary_stats<-data.frame(matrix(ncol = 15, nrow = 0))
+  i<-1
+  for (i in 1:length(otus)){
+  temp <- datafile[datafile$OTU==otus[i],]
+  pops<-unique(temp[[popcolname]])
+  x <- as.list(temp$sequences)
+  x <- as.DNAbin(ape::as.alignment(x))
+  h <- pegas::haplotype(x)
+  N<-nrow(temp)
+  H<-length(unique(temp$sequences))
+  nd<-nuc.div(h,variance=TRUE) 
+  nd_var<-paste(round(nd[1],digits = 4),format(round(nd[2],digits = 6),scientific=FALSE),sep = " ± ")
+  hd<-hap.div(h,variance=TRUE)
+  hd_var<-paste(round(hd[1],digits = 3),round(hd[2],digits = 3),sep = " ± ")
+  tajima<-tajima.test(x) 
+  population<-"overall"
+  m<-x <- as.matrix(x)
+  if(H>1){
+    theta<-1
+    B<-1000
+    if (is.list(x)) x <- as.matrix(x)
+    n <- dim(x)[1]
+    k <- mean(dist.dna(x, "N"))
+    ss <- seg.sites(x)
+    U <- numeric(n)
+    for (i in 1:n) for (j in ss)
+      if (all(x[i, j, drop = TRUE] != x[-i, j])) U[i] <- U[i] + 1
+    U <- (U - k/2)^2
+    R2.obs <- sqrt(sum(U)/n)/length(ss)
+    B<-1000
+    R <- numeric(B)
+    for (b in 1:B) {
+      tr <- rcoal(n, rep("", n))
+      tr$edge.length <- rpois(2*n - 2, theta * tr$edge.length)
+      d <- cophenetic(tr)
+      k <- mean(d)
+      U <- tr$edge.length[tr$edge[, 2] <= n]
+      U <- (U - k/2)^2
+      R[b] <- sqrt(sum(U)/n)/sum(tr$edge.length)
+    }
+    R <- na.omit(R)
+    R2_value<-round(R2.obs,digits = 3)
+    R2_P = sum(R < R2.obs)/length(R)
+    R2_P = round(R2_P,digits = 3)
+  }else{
+    R2_value<-"NA"
+    R2_p<-"NA"
+  }
+  basicstats<-c(temp$Scientific_name[1],temp$blastlowest[1],temp$OTU[1],population,N,H,hd_var,nd_var,round(tajima$D,digits = 3),R2_value,tajima$Pval.normal,R2_P,tajima$Pval.beta,hd[1],nd[1])
+  summary_stats<-rbind(summary_stats,basicstats)
+  i<-1
+  for (i in 1:length(pops)){
+    temp2 <- temp[temp[[popcolname]]==pops[i],]
+    x <- as.list(temp2$sequences)
+    x <- as.DNAbin(ape::as.alignment(x))
+    h <- pegas::haplotype(x)
+    N<-nrow(temp2)
+    H<-length(unique(temp2$sequences))
+    nd<-nuc.div(h,variance=TRUE) 
+    nd_var<-paste(round(nd[1],digits = 4),format(round(nd[2],digits = 6),scientific=F),sep = " ± ")
+    hd<-hap.div(h,variance=TRUE)
+    hd_var<-paste(round(hd[1],digits = 3),round(hd[2],digits = 3),sep = " ± ")
+    tajima<-tajima.test(x) 
+    population<-as.character(temp2[[popcolname]][1])
+    m<-x <- as.matrix(x)
+    if(H>1){
+      theta<-1
+      B<-1000
+      if (is.list(x)) x <- as.matrix(x)
+      n <- dim(x)[1]
+      k <- mean(dist.dna(x, "N"))
+      ss <- seg.sites(x)
+      U <- numeric(n)
+      for (i in 1:n) for (j in ss)
+        if (all(x[i, j, drop = TRUE] != x[-i, j])) U[i] <- U[i] + 1
+      U <- (U - k/2)^2
+      R2.obs <- sqrt(sum(U)/n)/length(ss)
+      B<-1000
+      R <- numeric(B)
+      for (b in 1:B) {
+        tr <- rcoal(n, rep("", n))
+        tr$edge.length <- rpois(2*n - 2, theta * tr$edge.length)
+        d <- cophenetic(tr)
+        k <- mean(d)
+        U <- tr$edge.length[tr$edge[, 2] <= n]
+        U <- (U - k/2)^2
+        R[b] <- sqrt(sum(U)/n)/sum(tr$edge.length)
+      }
+      R <- na.omit(R)
+      R2_value<-round(R2.obs,digits = 3)
+      R2_P = sum(R < R2.obs)/length(R)
+      R2_P = round(R2_P,digits = 3)
+    }else{
+      R2_value<-"NA"
+      R2_p<-"NA"
+    }
+    basicstats<-c(temp2$Scientific_name[1],temp2$blastlowest[1],temp2$OTU[1],population,N,H,hd_var,nd_var,round(tajima$D,digits = 3),R2_value,tajima$Pval.normal,R2_P,tajima$Pval.beta,hd[1],nd[1])
+    summary_stats<-rbind(summary_stats,basicstats)
+  }
+  colnames(summary_stats)<-c("Species","Blast Species","OTU","Population","Sample Size","Number of Haplotypes","hap div var","nuc div var","Tajima's D","R2","Tajima's D p-value","R2 p-value","Tajima's D p-value beta","haplotype diversity","nucleotide diversity")
+  }
+  write.csv(summary_stats, file = paste(folder,"/",runname,"_basic_seq_stats.csv", sep=""))
+}
+# for mismatch graphs
+MMD_all<-function(folder,table,runname,popcolname){
+  folder_name<-paste(folder,"MMD_",runname,"/",sep = "")
+  dir.create(folder_name)
+  otus<-unique(table$OTU)
+  for (i in 1:length(otus)){
+    temp <- table[table$OTU==otus[i],]
+    y <- as.list(temp$sequences)
+    y <- as.DNAbin(ape::as.alignment(y))
+    d <- dist.dna(y, "N")
+    maxdist<-max(d)
+    if (maxdist > 0){
+    if(maxdist < 4) {maxdist<-4}
+    lcol = c("lightblue", "darkred")
+    lty = c(1, 1)
+    jpeg(file=paste(folder_name,temp$Scientific_name[1],"_",temp$best_identity[1],"_",temp$blastlowest[1],"_",temp$OTU[1],"_",runname,"_all_islands_MMD.jpeg",sep = ""), width=11, height=10, units = "in", res=400)
+    par(mar=c(5.1, 5.1, 4.1, 2.1))
+    h <- hist(d, xlab = "Number of Pairwise Differences",ylab="Frequency", main = "",xaxt = "n",cex.axis = 2, cex.lab = 2,  ylim = c(0,1), freq = FALSE,breaks = c(0:maxdist))
+    axis(1, at = c(0:maxdist),cex.axis = 2)
+    dd <- density(d, bw = 2)
+    lines(dd, col = lcol[1], lty = lty[1],lwd = 4)
+    ## by David Winter:
+    theta <- mean(d)
+    upper <- ceiling(max(d))
+    e <- sapply(0:upper, function(i) theta^i / (theta + 1)^(i + 1))
+    lines(e, col = lcol[2], lty = lty[2],lwd = 4)
+    rug(d)
+    psr <- par("usr")
+    xx <- psr[2]/2
+    yy <- psr[4] * (0.5 + 0.5/par("plt")[4])
+    legend(xx, yy, c("Empirical", "Stable expectation"),
+           lty = lty, col = lcol, bg = "white", lwd = 4,bty = "n",
+             xjust = 0.5, yjust = 0.5, horiz = TRUE, xpd = TRUE,cex=2)
+      #legend("topleft", c("Empirical", "Stable expectation"),
+      #       lty = 1, col = lcol, bg = "white", bty = "n")
+    invisible(list(histogram = h, empirical.density = dd, expected.curve = e))
+    dev.off()
+    }
+    pops<-unique(temp[[popcolname]])
+    for (i in 1:length(pops)){
+      temppop <- temp[temp[[popcolname]]==pops[i],]
+      y <- as.list(temppop$sequences)
+      y <- as.DNAbin(ape::as.alignment(y))
+      d <- dist.dna(y, "N")
+      maxdist<-max(d)
+      if(maxdist>0){
+      if(maxdist < 4) {maxdist<-4}
+      lcol = c("lightblue", "darkred")
+      lty = c(1, 1)
+      jpeg(file=paste(folder_name,temppop$Scientific_name[1],"_",temppop$best_identity[1],"_",temppop$blastlowest[1],"_",temppop$OTU[1],"_",runname,"_",temppop[[popcolname]][1],"_MMD.jpeg",sep = ""), width=11, height=10, units = "in", res=400)
+      par(mar=c(5.1, 5.1, 4.1, 2.1))
+      h <- hist(d, xlab = "Number of Pairwise Differences",ylab="Frequency", main = "",xaxt = "n",cex.axis = 2, ylim = c(0,1), cex.lab = 2, freq = FALSE,breaks = c(0:maxdist))
+      axis(1, at = c(0:maxdist),cex.axis = 2)
+      dd <- density(d, bw = 2)
+      lines(dd, col = lcol[1], lty = lty[1],lwd = 4)
+      ## by David Winter:
+      theta <- mean(d)
+      upper <- ceiling(max(d))
+      e <- sapply(0:upper, function(i) theta^i / (theta + 1)^(i + 1))
+      lines(e, col = lcol[2], lty = lty[2],lwd = 4)
+      rug(d)
+      psr <- par("usr")
+      xx <- psr[2]/2
+      yy <- psr[4] * (0.5 + 0.5/par("plt")[4])
+      legend(xx, yy, c("Empirical", "Stable expectation"),
+             lty = lty, col = lcol, bg = "white", lwd = 4,bty = "n",
+             xjust = 0.5, yjust = 0.5, horiz = TRUE, xpd = TRUE,cex=2)
+      #legend("topleft", c("Empirical", "Stable expectation"),
+      #       lty = 1, col = lcol, bg = "white", bty = "n")
+      invisible(list(histogram = h, empirical.density = dd, expected.curve = e))
+      dev.off()
+      }
+    }
+  } 
+}
+#makes individual phist results into one nice table for analysis
 convert_phist_to_table<-function(folderinput,folderoutput,runname){
   files<-list.files(folderinput)
   phisttable<-data.frame(matrix(ncol = 10, nrow = 0))
@@ -1119,7 +1032,7 @@ convert_phist_to_table<-function(folderinput,folderoutput,runname){
   colnames(phisttable)<-c("Species","Population 1","Population 2","PhiST value","p-value","fdr p-value","bonferroni p-value","sig p-value","sig fdr","sig bon")
   write.csv(phisttable, file = paste(folderoutput,"/",runname,"_phist_table_manyspecies.csv", sep=""))
 }
-
+# this is not used in the paper but was investigated
 nmdsbyspecies<-function(folder,datafile,runname,popcolname,nsamples){
   foldername<-paste(folder,runname,sep = "")
   dir.create(foldername)
@@ -1178,7 +1091,7 @@ nmdsbyspecies<-function(folder,datafile,runname,popcolname,nsamples){
   dev.off()
   }
 }
-
+# not used in the paper but was investigated
 pairwiseFst<-function(folder, datafile, runname, popcolname,order1,numperm,nind,haplorestrict){
   folder_name2<-paste(folder,"/PairwiseFst",runname,"/",sep = "")
   dir.create(folder_name2)
@@ -1314,7 +1227,7 @@ pairwiseFst<-function(folder, datafile, runname, popcolname,order1,numperm,nind,
   colnames(phisttable)<-c("Species","Populations","FST value") #"p-value","fdr p-value","bonferroni p-value","sig p-value","sig fdr","sig bon"
   write.csv(phisttable, file = paste(folderoutput,"/",runname,"_fst_table_manyspecies.csv", sep=""))
 }
-
+#get info about taxonomy
 taxonomy<-function(folder, datafile, runname){
   otus<-unique(datafile$OTU)
   taxa<-data.frame(matrix(ncol = 15, nrow = 0)) #create dataframe
@@ -1361,8 +1274,7 @@ taxonomy<-function(folder, datafile, runname){
   colnames(sumtaxa)<-c("otu_number","obitools_species","obitools_genus","obitools_family","obitools_order","obitools_class","blast_species","blast_genus","blast_family","blast_order","blast_class","blast_phylum")
   write.csv(sumtaxa,paste(folder,"/",runname,"_taxonomy_summary.csv", sep=""))
 }
-#how to solve the memory issue for phist raw reads
-#have a function inside the function so it gets rid of files after running
+#part 1 of how to solve the memory issue for phist raw reads, have a function inside the function so it gets rid of files after running
 epairphi<-function(temp2,runname,order,numperm,nind,popcolname,haplorestrict,folder_name2){
     #identify any populations with less than nind individuals
     populations<-popcolname
@@ -1422,7 +1334,7 @@ epairphi<-function(temp2,runname,order,numperm,nind,popcolname,haplorestrict,fol
       write.csv(phist_reordered, file = paste(folder_name2, temp2$Scientific_name[1],"_",temp2$best_identity[1],"_",temp2$blastlowest[1],"_",temp2$OTU[1],"_",runname, "_phistat.csv", sep=""))
     } 
     }
-
+#part 2 of how to solve the memory issue for phist raw reads, running phist
 eDNA_haplotypes_pairphi_raw<-function(OTUvsspecies,folder,datafile,runname,order,numperm,nind,popcolname,haplorestrict){
   folder_name2<-paste(folder,"PhiStats",runname,"/",sep = "")
   dir.create(folder_name2)
@@ -1439,7 +1351,7 @@ eDNA_haplotypes_pairphi_raw<-function(OTUvsspecies,folder,datafile,runname,order
     epairphi(temp2,runname,order,numperm,nind,popcolname,haplorestrict,folder_name2)
   }
   }
-
+#phist for the species and populations, not pairwise phist
 overallphist<-function(folder,datafile,runname,popcolname,n_permutations,nind){
   otus<-unique(datafile$OTU) #get list for running the loop
   summary_stats<-data.frame(matrix(ncol = 10, nrow = 0)) #make empty df to fill
@@ -1558,7 +1470,6 @@ overallphist<-function(folder,datafile,runname,popcolname,n_permutations,nind){
   colnames(summary_stats)<-c("Species","blast lowest","OTU","Population","Sample Size","Number of Haplotypes","WC84 Fst","Fst p-value","phist","phist p-value")
   write.csv(summary_stats, file = paste(folder,"/",runname,"_overallphist.csv", sep=""))
 }  
-
 #phist accumulation curves
 phistacccurv<-function(folder,datafile,runname,popcolname,numperm,sampleperm){
   folder_name2<-paste(folder,"PhiSTAccumulationCurves",runname,"/",sep = "")
@@ -1713,19 +1624,21 @@ phistacccurv<-function(folder,datafile,runname,popcolname,numperm,sampleperm){
 
 
 
-################### for this run here is my inputs ################### 
-setwd("/Users/taylorely/Documents/GradStuff/Ch.1/code")
-
-
-folder1<-"/Users/taylorely/Documents/GradStuff/Ch.1/code"
+############################### my inputs ###############################
+#set working directory
+setwd("/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI")
+#folder where you want things
+folder1<-"/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025/"
+#load metadata
 metadata1<-read.csv("Metadata_MHI.csv", stringsAsFactors = F)
+#load haplo table from JAMP output
 table1<- read.csv("obitools/maxee025/MHI_ee025_haplo_table.csv", stringsAsFactors=F) # JAMP output
+#load output from obitools
 obitools1<-read.table("obitools/maxee025/MHI_ee025_tax_assigned.tab",header = TRUE, sep = "\t",fill=TRUE, quote="",blank.lines.skip=FALSE) # ecotag/obitools output
+#load modified blastn output see notes at the top of this file
 blast1<-read.table("obitools/maxee025/blast_MHI_ee025_zizka_awk.txt", header = FALSE, sep = "\t",fill=TRUE, blank.lines.skip=FALSE,quote = "") # blastn and awk output
-numcode_inv_mt<-5
+#code for the translation of codons
 numcode_vert_mt<-2
-alignment1<-read.fasta("obitools/maxee025/cytb_ee025_r10_m90haplotypes.fasta")
-
 
 ######################################################################################
 #NOW RUN IT
@@ -1733,108 +1646,125 @@ load_species(metadata = metadata1,
              table = table1,
              obitools = obitools1,
              blast = blast1,
-             lowestmatch = 0.90,
-             lowestreads = 10,
+             lowestmatch = 0.90, #has to be 90% match
+             lowestreads = 10, #sequences have to have at least 10 reads
              OTUvsspecies = "OTU",
-             folder = folder1,
+             folder = folder1, #folder where everything will be saved to
              nblanks = 11,     # remember to change per run
              nsamples = 256,    # remember to change per run
-             runname = "cytb_ee05_r10_m90_2",   # remember to change per run
-             scaled1 = 0.5,
-             scaled2 = 0.75,
-             scaled3 = 0.9,
-             removefirstbp = TRUE)
+             runname = "cytb_ee025_r10_m90",   # remember to change per run
+             scaled1 = 0.5, #below this is smallest scale for scaled by reads, this is <50%
+             scaled2 = 0.75, #this is 2nd  scale for scaled by reads, this is >50% but < 75%
+             scaled3 = 0.9, #this is 3rd and 4th scale for scaled by reads, 3rd is >75% but < 90%, 4th is >90%
+             removefirstbp = TRUE) # see why to do this in notes at the top of file
+
+#read in alignment file created after the load_species function
+alignment1<-read.fasta("obitools/maxee025/cytb_ee025_r10_m90haplotypes.fasta")
 
 #REMOVE SEQs WITH STOP CODONS
-remove_stop_codons(alignment = alignment1,
-                   presenceabsence = presenceabsencecytb_ee05_r10_m90_2,
-                   rarefied = rarefiedcytb_ee05_r10_m90_2,
-                   normalized = normalizedcytb_ee05_r10_m90_2,
-                   alldata = final_combinedcytb_ee05_r10_m90_2,
-                   runname = "cytb_ee025_r10_m90_nSC",
-                   frame1 = 0,
-                   numcode1 = numcode_vert_mt,
-                   folder = folder1)
-file_raw<-read.csv("obitools/maxee025/cytb_ee025_r10_m90_reads_rarefied.csv", stringsAsFactors=F)
-#reduce reads that are too large
-reducereads(datafile=file_raw,
-            nsamp=256,
-            alignment=alignment1,
-            runname="cytb_ee025_raw",
-            folder=folder1,
-            metadata=metadata1)
+remove_stop_codons(alignment = alignment1, # remember to read this in
+                   presenceabsence = presenceabsencecytb_ee025_r10_m90, # presence-absence proxies, this df was created from load_species function
+                   rarefied = rarefiedcytb_ee025_r10_m90, # scaled-by-reads proxies, this df was created from load_species function
+                   normalized = normalizedcytb_ee025_r10_m90, # raw reads proxies, this df was created from load_species function
+                   alldata = final_combinedcytb_ee025_r10_m90, # all data, this df was created from load_species function
+                   runname = "cytb_ee025_r10_m90_nSC", #run name
+                   frame1 = 0, #what frame to start codon on
+                   numcode1 = numcode_vert_mt, #code for translation
+                   folder = folder1) #folder where everything will be saved to
 
+#reduce reads that are too large
+reducereads(datafile=normalizedcytb_ee025_r10_m90, # this df was created from load_species function
+            nsamp=256, #number of samples
+            alignment=alignment1, #alignment fileloaded previously
+            runname="cytb_ee025_raw", # run name
+            folder=folder1, #folder where everything will be saved to
+            metadata=metadata1) 
+
+#get info about haplotypes and counts per species and population within a species
 summary_eDNA(OTUvsspecies = "OTU",
-             presenceabsence = presenceabsencecytb_ee05_r10_m90_nSC_2,
-             rarefied = rarefiedcytb_ee05_r10_m90_nSC_2,
-             normalized = normalizedcytb_ee05_r10_m90_nSC_2,
-             runname = "cytb_ee05_r10_m90_nSC_2",
-             nhap = 1,
-             folder = folder1,
-             haplorestrict = FALSE
+             presenceabsence = presenceabsencecytb_ee025_r10_m90_nSC, # presence-absence proxies, this df was created from load_species function and modified by remove stop codon
+             rarefied = rarefiedcytb_ee025_r10_m90_nSC, # scaled-by-reads proxies, this df was created from load_species function and modified by remove stop codon
+             normalized = normalizedcytb_ee025_r10_m90_nSC, # raw reads proxies, this df was created from load_species function and modified by remove stop codon
+             runname = "cytb_ee025_r10_m90_nSC", # run name
+             nhap = 1, # minimum number of haplotypes
+             folder = folder1, #folder where everything will be saved to
+             haplorestrict = FALSE #TRUE: haplotypes need to be in multiple samples, FALSE: keep all data
              )
 
-#repeat this for popgen_r_regioncytb_r10_m95_nSC, popgen_pacytb_r10_m95_nSC, popgen_rcytb_r10_m95_nSC
-#popcolname is the name of the population column you want to test: for me "site" or "region"
-unique(rarefied2$region)
+#get pairwise phist
+#repeat this for popgen_rcytb_r10_m95_nSC, popgen_pacytb_r10_m95_nSC, popgen_ncytb_r10_m95_nSC
 eDNA_haplotypes_pairphi(OTUvsspecies = "OTU",
-                        folder = folder1,
-                        datafile = rarefied2,
-                        runname = "cytb_r10_m90_nSC_ee025_sideofisland_withMauidiff_n5",
-                        numperm = 1000,
-                        order = c("North Kauai","South Kauai","East Kauai","North Oahu","West Oahu","East Oahu","South Oahu","Olowalu","South Kihei","Makena","South Makena","Hilo","Kona"),
-                        nind=19,
-                        popcolname = "region",
-                        haplorestrict = FALSE
+                        folder = folder1, #folder where everything will be saved to
+                        datafile = popgen_rcytb_ee025_r10_m90_nSC, # scaled-by-reads proxies, this was created from summary_eDNA function
+                        runname = "cytb_r10_m90_nSC_ee025_r", #run name
+                        numperm = 1000, #number of permutations for pairwise phist to calculate p-value
+                        order = c("Kauai","Oahu","Maui","Hawaii"), #order for you final pairwise phist table
+                        nind=19, #this means that there needs to be 20 or greater individuals per population to calculate pairwise phist
+                        popcolname = "site", #which population level to use
+                        haplorestrict = FALSE #I never used this function but I made it to test out
                         )
 
-rarefied2<-rarefied[rarefied$OTU != "OTU_104",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_11",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_113",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_12",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_123",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_13",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_145",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_150",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_1550",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_18",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_184",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_186",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_19",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_194",]
-rarefied2<-rarefied2[rarefied2$OTU != "OTU_200",]
+phistacccurv(folder=folder1, #folder where everything will be saved to
+             datafile= popgen_rcytb_ee025_r10_m90_nSC, # scaled-by-reads proxies, this was created from summary_eDNA function
+             runname="cytb_ee025_r10_m90_nSC_SE_rep100", #run name
+             popcolname="site", #population level
+             numperm=1, #this is for calculating p-value for phist which is not necessary so I just have it at 1
+             sampleperm=100) #number of permutations for each sample size
 
+eDNA_haplotypes_pairphi_raw(OTUvsspecies = "OTU",
+                            folder = folder1, #folder where everything will be saved to
+                            datafile = popgen_rcytb_ee025_r10_m90_nSC, # scaled-by-reads proxies, this was created from summary_eDNA function
+                            runname = "cytb_r10_m90_nSC_ee025_site_raw_reduced_n600", # run name
+                            numperm = 1000, #number of permutations for pairwise phist to calculate p-value
+                            order = c("Kauai","Oahu","Maui","Hawaii"), #order for you final pairwise phist table
+                            nind=599, #minimum number of proxies needed to run comparison
+                            popcolname = "site", #which level of population to test
+                            haplorestrict = FALSE)
 
-phistacccurv(folder=folder1,
-             datafile=rarefied,
-             runname="cytb_ee025_r10_m90_nSC_SE_rep100",
-             popcolname="site",
-             numperm=1,
-             sampleperm=100)
+#get table for phist and p-values stats
+convert_phist_to_table(folderinput="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025/PhiStatscytb_r10_m90_nSC_ee025_r/",
+                       folderoutput="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025",
+                       runname="cytb_r10_m90_nSC_ee025_r")
 
-#try to run for raw data
-rarefied<-read.csv("obitools/maxee025/cytb_ee025_r10_m90_nSC_popgen_r.csv", stringsAsFactors = F)
-#reclassify region
-rarefied2<-rarefied
-rarefied2$region<-metadata1$Side[match(rarefied$sample,metadata1$Location)]
+#GET OVERALL STATS PER SPECIES
+statstable(folder = "/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025",
+           datafile = popgen_rcytb_ee025_r10_m90_nSC, # scaled-by-reads proxies, this was created from summary_eDNA function
+           runname = "cytb_ee025_r10_m90_nSC_r_site", # run name
+           popcolname = "site") #which level of population to test
 
-presenceabsence<-read.csv("obitools/maxee025/cytb_ee025_r10_m90_nSC_popgen_pa.csv", stringsAsFactors = F)
-rawreads<-read.csv("cytb_ee025_r10_m90_nSC_popgen_n.csv", stringsAsFactors = F)
+#get fasta files fastafilesperspecies<-function(datafile,popcolname,runname,folder)
+fastafilesperspecies(datafile=popgen_rcytb_ee025_r10_m90_nSC,
+                     popcolname="site",
+                     runname="cytb_r10_m90_nSC_ee05_site_r",
+                     folder="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025"
+                       )
+fastafilesperspeciesperpopulation(datafile=popgen_rcytb_ee025_r10_m90_nSC,
+                                  popcolname="site",
+                                  runname="cytb_r10_m90_nSC_ee025_n_bypop_region",
+                                  folder=folder1)
+fastatonexus(folderinput="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025/fastafilescytb_r10_m90_nSC_ee025_r_bypop_site",
+             folderoutput="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025",
+             runname="cytb_ee025_r_bypop_site_nexus")
+  
+MMD_all(folder=folder1,
+        table = popgen_rcytb_ee025_r10_m90_nSC,
+        runname = "cytb_r10_m90_nSC_ee025_r_site",
+        popcolname = "site")
 
 ######## figure out if resample A. nigrofuscus if there would be a lot of haplotypes still
 resample_haplo<-function(n_permutations,datafile,num_resample,comp_name,proxytype){
-permuted_fsts <- numeric(n_permutations)
-for (perm in seq_len(n_permutations)) {
-  AcanigF_stiss<-datafile[sample(nrow(datafile), num_resample), ]
-  nhaplo<-length(unique(AcanigF_stiss$haplotype))
-  permuted_fsts[perm] <- if (!is.null(nhaplo)) nhaplo else NA
-}
-ave_haplo <- mean(permuted_fsts, na.rm = TRUE)
-sd_haplo<-sd(permuted_fsts, na.rm = TRUE)
-se_haplo<-sd(permuted_fsts, na.rm = TRUE)/sqrt(length(permuted_fsts))
-max_haplo<-max(permuted_fsts)
-min_haplo<-min(permuted_fsts)
-resampletable<<-c(comp_name,proxytype,num_resample,ave_haplo,sd_haplo,se_haplo,max_haplo,min_haplo)
+  permuted_fsts <- numeric(n_permutations)
+  for (perm in seq_len(n_permutations)) {
+    AcanigF_stiss<-datafile[sample(nrow(datafile), num_resample), ]
+    nhaplo<-length(unique(AcanigF_stiss$haplotype))
+    permuted_fsts[perm] <- if (!is.null(nhaplo)) nhaplo else NA
+  }
+  ave_haplo <- mean(permuted_fsts, na.rm = TRUE)
+  sd_haplo<-sd(permuted_fsts, na.rm = TRUE)
+  se_haplo<-sd(permuted_fsts, na.rm = TRUE)/sqrt(length(permuted_fsts))
+  max_haplo<-max(permuted_fsts)
+  min_haplo<-min(permuted_fsts)
+  resampletable<<-c(comp_name,proxytype,num_resample,ave_haplo,sd_haplo,se_haplo,max_haplo,min_haplo)
 }
 #subsample only the species of interest
 Anigrofuscus<-rawreads[rawreads$OTU=="OTU_33",]
@@ -1854,7 +1784,7 @@ AcanigF_resample<-rbind(AcanigF_resample,resampletable)
 colnames(AcanigF_resample)<-c("Compared to","eDNA proxy","resampled N","Mean Num. Haplo","SD","SE","Max","Min")
 write.csv(AcanigF_resample,file = "ResamplingAcanigrofuscusToSeeIfLargeHaploNumDueToReads.csv")
 
-
+####################### not used for the paper ############################
 # pairwiseFst<-function(folder, datafile, runname, popcolname,order1,numperm,nind,haplorestrict)
 pairwiseFst(folder = folder1,
             datafile = presenceabsence,
@@ -1873,169 +1803,10 @@ overallphist(folder=folder1,
              n_permutations=1000,
              nind = 9)
 
-reduced<-read.csv("cytb_ee025_rawpopgen_noSC_reduced.csv", stringsAsFactors = F)
-otu11<-reduced[reduced$OTU=="OTU_11",]
-eDNA_haplotypes_pairphi_raw(OTUvsspecies = "OTU",
-                            folder = folder1,
-                            datafile = reduced,
-                            runname = "cytb_r10_m90_nSC_ee025_site_raw_reduced_n600",
-                            numperm = 1000,
-                            order = c("Kauai","Oahu","Maui","Hawaii"),
-                            nind=599,
-                            popcolname = "site",
-                            haplorestrict = FALSE)
-                                                                                                                                                                                                            
-#GET OVERALL STATS PER SPECIES
-#statstable<-function(folder,datafile,runname,popcolname)
 
-
-statstable(folder = "/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025",
-           datafile = popgen_pacytb_ee025_r10_m90_nSC,
-           runname = "cytb_ee025_r10_m90_nSC_pa_site",
-           popcolname = "site")
-geneticstatstable(folder = "/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee05",
-                  datafile = popgen_ncytb_ee05_r10_m90_nSC_2,
-                  runname = "cytb_ee05_r10_m90_nSC_normalized_site",
-                  popcolname = "site")
-samplesbyspecies(folder="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025",
-                     datafile = datafile,
-                     runname = "cytb_ee025_region",
-                     popcolname = "region")
-
-#figure out unique haplotypes per island
-#sum each haplotype to island 
-rarefied_df<-rarefied[c(4,5,20)] #only keep relavant columns
-rarefied_df2<-rarefied_df[!duplicated(rarefied_df), ] #dereplicate 
-rarefied_df2<-rarefied_df2[rarefied_df2$OTU %in% mspecieslist,] #only keep marine species
-rarefied_df2<-rarefied_df2[rarefied_df2$OTU %in% otustokeep,] # only keep shared species
-counthaplo<-as.data.frame(table(rarefied_df2$sequences)) #count how many islands 
-counthaplounique<-counthaplo$Var1[counthaplo$Freq==1] #keep only on one island
-rarefied_onlyunique<-rarefied_df2[rarefied_df2$sequences %in% counthaplounique,] #get the the right rows
-length(unique(rarefied_onlyunique$sequences)) #check
-finalunique<-as.data.frame(table(rarefied_onlyunique$site)) #count how many unique haplo per island
-
-
-#hapmap_all<-function(OTUvsspecies,table,runname,folder)
-hapmap_all(OTUvsspecies = "OTU",
-           table = presenceabsenceCOI_urchin_r10_m90_nSC,
-           runname = "COI_urchinprimer_PA",
-           folder=folder1)
-
-#get fasta files fastafilesperspecies<-function(datafile,popcolname,runname,folder)
-fastafilesperspecies(datafile=popgen_ncytb_ee025_r10_m90_nSC,
-                     popcolname="region",
-                     runname="cytb_r10_m90_nSC_ee05_region_normalized",
-                     folder="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025"
-                       )
-fastafilesperspeciesperpopulation(datafile=popgen_n,
-                                  popcolname="region",
-                                  runname="cytb_r10_m90_nSC_ee025_n_bypop_region",
-                                  folder=folder1)
-fastatonexus(folderinput="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025/fastafilescytb_r10_m90_nSC_ee025_n_bypop_region",
-             folderoutput="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025",
-             runname="cytb_ee025_n_bypop_region_nexus")
-  
-#get mismatch distribution graphs
-popgen_n<-read.csv("obitools/maxee025/cytb_ee025_r10_m90_nSC_popgen_n.csv", stringsAsFactors=F)
-popgen_r<-read.csv("obitools/maxee025/cytb_ee025_r10_m90_nSC_popgen_r.csv", stringsAsFactors=F)
-popgen_pa<-read.csv("obitools/maxee025/cytb_ee025_r10_m90_nSC_popgen_pa.csv", stringsAsFactors=F)
-
-popgen_n_acanigF<-read.csv("obitools/maxee025/AcanigF_rawreads_reducedby3.csv", stringsAsFactors=F)
-popgen_n_abdvai<-read.csv("obitools/maxee025/Abdvai_rawreads_reducedby3.csv", stringsAsFactors=F)
-popgen_n_zebflav<-read.csv("obitools/maxee025/Zebflav_rawreads_reducedby8.csv", stringsAsFactors=F)
-
-#MMD_all<-function(folder,table,runname, popcolname)
-MMD_all(folder=folder1,
-        table = popgen_n_zebflav,
-        runname = "cytb_r10_m90_nSC_ee025_n_region_zebflav",
-        popcolname = "region")
-
-popcolname = "site"
-runname = "cytb_r10_m90_nSC_ee025_n_site"
-folder=folder1
-temp <- popgen_n[popgen_n$OTU=="OTU_495",]
-y <- as.list(temp$sequences)
-y <- as.DNAbin(ape::as.alignment(y))
-d <- dist.dna(y, "N")
-maxdist<-max(d)
-if (maxdist > 0){
-  if(maxdist < 4) {maxdist<-4}
-  lcol = c("lightblue", "darkred")
-  lty = c(1, 1)
-  jpeg(file=paste("obitools/maxee025/",temp$Scientific_name[1],"_",temp$best_identity[1],"_",temp$blastlowest[1],"_",temp$OTU[1],"_",runname,"_all_islands_MMD.jpeg",sep = ""), width=11, height=10, units = "in", res=400)
-  par(mar=c(5.1, 5.1, 4.1, 2.1))
-  h <- hist(d, xlab = "Number of Pairwise Differences",ylab="Frequency", main = "",xaxt = "n",cex.axis = 2, cex.lab = 2,  ylim = c(0,1), freq = FALSE,breaks = c(0:maxdist))
-  axis(1, at = c(0:maxdist),cex.axis = 2)
-  dd <- density(d, bw = 2)
-  lines(dd, col = lcol[1], lty = lty[1],lwd = 4)
-  ## by David Winter:
-  theta <- mean(d)
-  upper <- ceiling(max(d))
-  e <- sapply(0:upper, function(i) theta^i / (theta + 1)^(i + 1))
-  lines(e, col = lcol[2], lty = lty[2],lwd = 4)
-  rug(d)
-  psr <- par("usr")
-  xx <- psr[2]/2
-  yy <- psr[4] * (0.5 + 0.5/par("plt")[4])
-  legend(xx, yy, c("Empirical", "Stable expectation"),
-         lty = lty, col = lcol, bg = "white", lwd = 4,bty = "n",
-         xjust = 0.5, yjust = 0.5, horiz = TRUE, xpd = TRUE,cex=2)
-  #legend("topleft", c("Empirical", "Stable expectation"),
-  #       lty = 1, col = lcol, bg = "white", bty = "n")
-  invisible(list(histogram = h, empirical.density = dd, expected.curve = e))
-  dev.off()
-}
-pops<-unique(temp[[popcolname]])
-for (i in 1:length(pops)){
-  temppop <- temp[temp[[popcolname]]==pops[i],]
-  y <- as.list(temppop$sequences)
-  y <- as.DNAbin(ape::as.alignment(y))
-  d <- dist.dna(y, "N")
-  maxdist<-max(d)
-  if(maxdist>0){
-    if(maxdist < 4) {maxdist<-4}
-    lcol = c("lightblue", "darkred")
-    lty = c(1, 1)
-    jpeg(file=paste("obitools/maxee025/",temppop$Scientific_name[1],"_",temppop$best_identity[1],"_",temppop$blastlowest[1],"_",temppop$OTU[1],"_",runname,"_",temppop[[popcolname]][1],"_MMD.jpeg",sep = ""), width=11, height=10, units = "in", res=400)
-    par(mar=c(5.1, 5.1, 4.1, 2.1))
-    h <- hist(d, xlab = "Number of Pairwise Differences",ylab="Frequency", main = "",xaxt = "n",cex.axis = 2, ylim = c(0,1), cex.lab = 2, freq = FALSE,breaks = c(0:maxdist))
-    axis(1, at = c(0:maxdist),cex.axis = 2)
-    dd <- density(d, bw = 2)
-    lines(dd, col = lcol[1], lty = lty[1],lwd = 4)
-    ## by David Winter:
-    theta <- mean(d)
-    upper <- ceiling(max(d))
-    e <- sapply(0:upper, function(i) theta^i / (theta + 1)^(i + 1))
-    lines(e, col = lcol[2], lty = lty[2],lwd = 4)
-    rug(d)
-    psr <- par("usr")
-    xx <- psr[2]/2
-    yy <- psr[4] * (0.5 + 0.5/par("plt")[4])
-    legend(xx, yy, c("Empirical", "Stable expectation"),
-           lty = lty, col = lcol, bg = "white", lwd = 4,bty = "n",
-           xjust = 0.5, yjust = 0.5, horiz = TRUE, xpd = TRUE,cex=2)
-    #legend("topleft", c("Empirical", "Stable expectation"),
-    #       lty = 1, col = lcol, bg = "white", bty = "n")
-    invisible(list(histogram = h, empirical.density = dd, expected.curve = e))
-    dev.off()
-  }
-}
- 
-
-
-
-popgen_pacytb_zizka_r10_m95_nSC_ee03$sample[popgen_pacytb_zizka_r10_m95_nSC_ee03$sample =="Kona Dog Beach/Harbor"]<-"Harbor"
-popgen_rcytb_zizka_r10_m95_nSC_ee03$sample[popgen_rcytb_zizka_r10_m95_nSC_ee03$sample =="Kona Dog Beach/Harbor"]<-"Harbor"
-
-#get table for phist and p-values stats
-convert_phist_to_table(folderinput="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025/PhiStatscytb_r10_m90_nSC_ee025_sideofisland_withMauidiff_n5/",
-                       folderoutput="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025",
-                       runname="cytb_ee025_m90_nSC_sideofisland_withMauisub_n20_r")
 convert_phist_to_table(folderinput="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025/PhiStatscytb_r10_m90_nSC_ee03_site_normalized_reduced_test_n10/",
                        folderoutput="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025",
                        runname="cytb_ee025_m90_nSC_site_raw_n10_reduced")
-
-ee025_raw<-read.csv(file = 'obitools/maxee025/cytb_ee025_r10_m90_nSCspecies_haplotype_table_filtered_noSC.csv',stringsAsFactors=F)
 
 nmdsbyspecies(folder=folder1,
               datafile=ee025_raw,
@@ -2043,12 +1814,6 @@ nmdsbyspecies(folder=folder1,
               popcolname = "Region",
               nsamples=256)
 
-# oahu: west: blue, east: green, south: tan, north:pink purple orange
-#kauai n: orange, pink purple, kauai e tan, kauai n: blue and green
-#hawaii kona n dark blue, kona rest blue green, hilo n tan, hilo orange pink purple
-#maui n: tan, south: dark blue, central: all rest
-#cols1<-c("lightblue","lightgreen","tan","orange","lightpink","purple","darkblue","darkgreen","lightblue","lightgreen","tan","orange","lightpink","purple","darkblue","darkgreen","lightblue","lightgreen","tan","orange","lightpink","purple","darkblue","darkgreen","lightblue","lightgreen","tan","orange","lightpink","purple","darkblue","darkgreen")
-#cols1<-c("kona","maui","kauai N","maui S","kauai N","kauai s","kona","kona","oahu w","oahu n","oahu e","maui c","kona n","oahu e","hilo","hilo","maui c","hilo n","kauai s","kauai e","oahu w","kauai n","maui c","maui n","maui c","kauai s","oahu n","hilo","kauai s","oahu s","oahu n","maui c")
 cols1<-c("lightblue","lightblue","orange","darkblue","pink","lightblue","lightgreen","darkgreen","lightblue","orange","lightgreen","lightgreen","darkblue","darkgreen","orange","pink","darkgreen","tan","darkblue","tan","darkblue","purple","orange","tan","pink","lightgreen","pink","purple","darkgreen","tan","purple","purple")
 
 jpeg("obitools/maxee025/allfish_ee025_raw_pca_island_location.jpg", width=12, height=10, units= "in", res=600)
@@ -2068,500 +1833,4 @@ d_carn_raw <- vegdist(vOTU, method="bray")
 #Permanova
 app_var_raw_location<-adonis(vOTU ~ sampledf_raw$Island+sampledf_raw$Location+sampledf_raw$Samples, method = "bray")$aov.tab
 write.csv(app_var_raw_location,file="obitools/maxee025/PERMANOVA_raw.csv")
-
-#########################################
-#subset raw reads file for A. nigrofuscus, A. vaigiensis, and Z. flavescens
-# divide all reads for A. nigrofuscus and A. vaigiensis by 3 and Z. flavescens by 8 (both of these numbers are the min to get the functions working properly on R)
-
-#load data
-ee025raw<-read.csv("obitools/maxee025/cytb_ee025_r10_m90species_haplotype_table_filtered.csv", stringsAsFactors=F)
-#subset A.nigrofuscus
-temp_raw <- ee025raw[ee025raw$OTU=="OTU_33",]
-
-test<-read.csv("/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025/PhiStatscytb_r10_m90_nSC_ee025_site_pa/Abudefduf sordidus_1_Abudefduf sordidus_OTU_9_cytb_r10_m90_nSC_ee025_site_pa_phistat.csv")
-
-
-
-datafile<-popgen_n_regioncytb_ee025_r10_m90_nSC
-#summary_stats<-data.frame(matrix(ncol = 15, nrow = 0))
-
-  temp <- datafile[datafile$OTU=="OTU_37",]
-  pops<-unique(temp$region)
-  x <- as.list(temp$sequences)
-  x <- as.DNAbin(ape::as.alignment(x))
-  h <- pegas::haplotype(x)
-  N<-nrow(temp)
-  H<-length(unique(temp$sequences))
-  nd<-nuc.div(h,variance=TRUE) 
-  nd_var<-paste(round(nd[1],digits = 4),format(round(nd[2],digits = 6),scientific=FALSE),sep = " ± ")
-  hd<-hap.div(h,variance=TRUE)
-  hd_var<-paste(round(hd[1],digits = 3),round(hd[2],digits = 6),sep = " ± ")
-  tajima<-tajima.test(x) 
-  population<-"overall"
-  m<-x <- as.matrix(x)
-  if(H>1){
-    theta<-1
-    B<-1000
-    if (is.list(x)) x <- as.matrix(x)
-    n <- dim(x)[1]
-    k <- mean(dist.dna(x, "N"))
-    ss <- seg.sites(x)
-    U <- numeric(n)
-    for (i in 1:n) for (j in ss)
-      if (all(x[i, j, drop = TRUE] != x[-i, j])) U[i] <- U[i] + 1
-    U <- (U - k/2)^2
-    R2.obs <- sqrt(sum(U)/n)/length(ss)
-    B<-1000
-    R <- numeric(B)
-    for (b in 1:B) {
-      tr <- rcoal(n, rep("", n))
-      tr$edge.length <- rpois(2*n - 2, theta * tr$edge.length)
-      d <- cophenetic(tr)
-      k <- mean(d)
-      U <- tr$edge.length[tr$edge[, 2] <= n]
-      U <- (U - k/2)^2
-      R[b] <- sqrt(sum(U)/n)/sum(tr$edge.length)
-    }
-    R <- na.omit(R)
-    R2_value<-round(R2.obs,digits = 3)
-    R2_P = sum(R < R2.obs)/length(R)
-    R2_P = round(R2_P,digits = 3)
-  }else{
-    R2_value<-"NA"
-    R2_p<-"NA"
-  }
-  basicstats<-c(temp$Scientific_name[1],temp$blastlowest[1],temp$OTU[1],population,N,H,hd_var,nd_var,round(tajima$D,digits = 3),R2_value,tajima$Pval.normal,R2_P,tajima$Pval.beta,hd[1],nd[1])
-  summary_stats<-rbind(summary_stats,basicstats)
-  i<-1
-  for (i in 1:length(pops)){
-    temp2 <- temp[temp$region==pops[i],]
-    x <- as.list(temp2$sequences)
-    x <- as.DNAbin(ape::as.alignment(x))
-    h <- pegas::haplotype(x)
-    N<-nrow(temp2)
-    H<-length(unique(temp2$sequences))
-    nd<-nuc.div(h,variance=TRUE) 
-    nd_var<-paste(round(nd[1],digits = 4),format(round(nd[2],digits = 6),scientific=F),sep = " ± ")
-    hd<-hap.div(h,variance=TRUE)
-    hd_var<-paste(round(hd[1],digits = 3),round(hd[2],digits = 6),sep = " ± ")
-    tajima<-tajima.test(x) 
-    population<-as.character(temp2$region[1])
-    m<-x <- as.matrix(x)
-    if(H>1){
-      theta<-1
-      B<-1000
-      if (is.list(x)) x <- as.matrix(x)
-      n <- dim(x)[1]
-      k <- mean(dist.dna(x, "N"))
-      ss <- seg.sites(x)
-      U <- numeric(n)
-      for (i in 1:n) for (j in ss)
-        if (all(x[i, j, drop = TRUE] != x[-i, j])) U[i] <- U[i] + 1
-      U <- (U - k/2)^2
-      R2.obs <- sqrt(sum(U)/n)/length(ss)
-      B<-1000
-      R <- numeric(B)
-      for (b in 1:B) {
-        tr <- rcoal(n, rep("", n))
-        tr$edge.length <- rpois(2*n - 2, theta * tr$edge.length)
-        d <- cophenetic(tr)
-        k <- mean(d)
-        U <- tr$edge.length[tr$edge[, 2] <= n]
-        U <- (U - k/2)^2
-        R[b] <- sqrt(sum(U)/n)/sum(tr$edge.length)
-      }
-      R <- na.omit(R)
-      R2_value<-round(R2.obs,digits = 3)
-      R2_P = sum(R < R2.obs)/length(R)
-      R2_P = round(R2_P,digits = 3)
-    }else{
-      R2_value<-"NA"
-      R2_p<-"NA"
-    }
-    basicstats<-c(temp2$Scientific_name[1],temp2$blastlowest[1],temp2$OTU[1],population,N,H,hd_var,nd_var,round(tajima$D,digits = 3),R2_value,tajima$Pval.normal,R2_P,tajima$Pval.beta,hd[1],nd[1])
-    summary_stats<-rbind(summary_stats,basicstats)
-  }
-  colnames(summary_stats)<-c("Species","Blast Species","OTU","Population","Sample Size","Number of Haplotypes","hap div var","nuc div var","Tajima's D","R2","Tajima's D p-value","R2 p-value","Tajima's D p-value beta","haplotype diversity","nucleotide diversity")
-  
-write.csv(summary_stats,file = "summarystats_normalizedcytb_ee025_r10_m90_nSC_site.csv")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-##################### STILL NEEDS WORK ###############################
-
-statstable_all(otu_species,popgen_COI_species,COI_species_presabs) 
-statstable_all(otuspeciesreads,popgen_COI_species_reads,COI_species_reads) 
-
-
-statstable_all(oturemovelow_COI_previous,popgen_COI_previous,COI_previous) 
-statstable_all(oturemovelow_COI_prev_reads,popgen_COI_prev_reads,COI_previous_reads) 
-####################### HAPLOTYPE ACCUMULATION CURVES (ALSO STILL NEEDS WORK) #############################
-
-#all haplotypes not divided by species
-lessdata_Oahu <- presabsen[c(2:11,24:27,36:47)] #just species and presence absence data from presenabsen table
-lessdata_Oahu$names<-paste(lessdata_Oahu$haplotype,lessdata_Oahu$OTU)
-lessdata_Oahu2<-lessdata_Oahu[rowSums(lessdata_Oahu[3:26])>0,]
-row.names(lessdata_Oahu2)<-lessdata_Oahu2$names
-lessdata_Oahu3<-lessdata_Oahu2[3:26]
-lessdata_Oahu4<-t(lessdata_Oahu3)
-hapcurve_Oahu<-specaccum(lessdata_Oahu4, "random")
-jpeg(file=("/Users/taylorely/Documents/Grad_Work/Experimenting_with_other_filters/shum/COI_specaccum_Oahu_Haplotype_Accumulation.jpeg"), width=15, height=8, units = "in", res=400)
-plot(hapcurve_Oahu)
-dev.off()
-
-lessdata_Hawaii <- presabsen[c(2:3,12:23,28:35,48:51)] #just species and presence absence data from presenabsen table
-lessdata_Hawaii$names<-paste(lessdata_Hawaii$haplotype,lessdata_Hawaii$OTU)
-lessdata_Hawaii2<-lessdata_Hawaii[rowSums(lessdata_Hawaii[3:26])>0,]
-row.names(lessdata_Hawaii2)<-lessdata_Hawaii2$names
-lessdata_Hawaii3<-lessdata_Hawaii2[3:26]
-lessdata_Hawaii4<-t(lessdata_Hawaii3)
-hapcurve_Hawaii<-specaccum(lessdata_Hawaii4, "random")
-jpeg(file=("/Users/taylorely/Documents/Grad_Work/Experimenting_with_other_filters/shum/cytb_specaccum_Hawaii_Haplotype_Accumulation.jpeg"), width=15, height=8, units = "in", res=400)
-plot(hapcurve_Hawaii)
-dev.off()
-###############
-#OAHU PREVIOUS
-lessdata_Oahu<- presabsen[c(3:11,24:27,36:47)] #just species and presence absence data from presenabsen table
-#Subset just species with previous data for them
-pastless_Oahu<-lessdata_Oahu
-for (i in 1:length(notpast)) {
-  pastless_Oahu<-pastless_Oahu[(pastless_Oahu$OTU != notpast[i]),]
-}
-#remove species with 0 occurances because they were only on other island
-pastless_Oahu_abund<-pastless_Oahu[rowSums(pastless_Oahu[2:25])>0,]
-#FOR SPECIES DETECTIONS: remove rows with only 1 occurrence because can't make a curve with a singleton 
-otupast<-unique(pastless_Oahu_abund$OTU)
-for (i in 1:length(otupast)) {
-  temp<-pastless_Oahu_abund[(pastless_Oahu_abund$OTU == otupast[i]),]
-  temp2<-sum(colSums(temp[2:25]))
-  if(temp2<3){pastless_Oahu_abund<-pastless_Oahu_abund[(pastless_Oahu_abund$OTU != otupast[i]),]}
-}
-#FOR HAPLOTYPE DETECTIONS
-#remove rows with 0 occurances because they were only on other island
-pastless_Oahu_haplo<-pastless_Oahu[rowSums(pastless_Oahu[2:25])>0,]
-#remove species with only 1 haplotype detected because can't make curve with singleton
-for (i in 1:length(otupast)) {
-  temp<-pastless_Oahu_haplo[(pastless_Oahu_haplo$OTU == otupast[i]),]
-  temp2<-nrow(temp)
-  if(temp2<3){pastless_Oahu_haplo<-pastless_Oahu_haplo[(pastless_Oahu_haplo$OTU != otupast[i]),]}
-}
-#convert into right format for iNEXT,list and abundance counts per species for detections
-hap_test_Oahu_prev_abund <- split(pastless_Oahu_abund[c(2:25)], pastless_Oahu_abund$OTU) #convert to list by species
-hap_test_Oahu_prev_abund <-lapply(hap_test_Oahu_prev_abund,as.abucount)
-#convert into right format for iNEXT,list and incidence counts per species for haplotypes
-hap_test_Oahu_prev_haplo <- split(pastless_Oahu_haplo[c(2:25)], pastless_Oahu_haplo$OTU) #convert to list by species
-hap_test_Oahu_prev_haplo <-lapply(hap_test_Oahu_prev_haplo, as.incfreq)
-
-#############
-#ALL OAHU
-#FOR SPECIES DETECTIONS: remove rows with only 1 occurrence because can't make a curve with a singleton 
-lessdata_Oahu_abund<-lessdata_Oahu[rowSums(lessdata_Oahu[2:25])>0,]
-otuless<-unique(lessdata_Oahu_abund$OTU)
-for (i in 1:length(otuless)) {
-  temp<-lessdata_Oahu_abund[(lessdata_Oahu_abund$OTU == otuless[i]),]
-  temp2<-sum(colSums(temp[2:25]))
-  if(temp2<3){lessdata_Oahu_abund<-lessdata_Oahu_abund[(lessdata_Oahu_abund$OTU != otuless[i]),]}
-}
-#FOR HAPLOTYPE DETECTIONS
-#remove rows with 0 occurrences because they were only on other island
-lessdata_Oahu_haplo<-lessdata_Oahu[rowSums(lessdata_Oahu[2:25])>0,]
-otuless<-unique(lessdata_Oahu_haplo$OTU)
-#remove species with only 1 haplotype detected because can't make curve with singleton
-for (i in 1:length(otuless)) {
-  temp<-lessdata_Oahu_haplo[(lessdata_Oahu_haplo$OTU == otuless[i]),]
-  temp2<-nrow(temp)
-  if(temp2<3){lessdata_Oahu_haplo<-lessdata_Oahu_haplo[(lessdata_Oahu_haplo$OTU != otuless[i]),]}
-}
-#convert into right format for iNEXT,list and abundance counts per species for detections
-hap_test_Oahu_abund <- split(lessdata_Oahu_abund[c(2:25)], lessdata_Oahu_abund$OTU) #convert to list by species
-hap_test_Oahu_abund <-lapply(hap_test_Oahu_abund,as.abucount)
-#convert into right format for iNEXT,list and incidence counts per species for haplotypes
-hap_test_Oahu_haplo <- split(lessdata_Oahu_haplo[c(2:25)], lessdata_Oahu_haplo$OTU) #convert to list by species
-hap_test_Oahu_haplo <-lapply(hap_test_Oahu_haplo, as.incfreq)
-
-####################################################
-#REPEAT HAWAII
-lessdata_Hawaii<- presabsen[c(3,12:23,28:35,48:51)] #just species and presence absence data from presenabsen table
-lessdata_Hawaii_abund <-lessdata_Hawaii[rowSums(lessdata_Hawaii[2:25])>0,]
-otuless<-unique(lessdata_Hawaii$OTU)
-#FOR SPECIES DETECTIONS: remove rows with only 1 occurrence because can't make a curve with a singleton 
-for (i in 1:length(otuless)) {
-  temp<-lessdata_Hawaii_abund[(lessdata_Hawaii_abund$OTU == otuless[i]),]
-  temp2<-sum(colSums(temp[2:25]))
-  if(temp2<3){lessdata_Hawaii_abund<-lessdata_Hawaii_abund[(lessdata_Hawaii_abund$OTU != otuless[i]),]}
-}
-#FOR HAPLOTYPE DETECTIONS
-#remove rows with 0 occurances because they were only on other island
-lessdata_Hawaii_haplo<-lessdata_Hawaii[rowSums(lessdata_Hawaii[2:25])>0,]
-otuless<-unique(lessdata_Hawaii_haplo$OTU)
-#remove species with only 1 haplotype detected because can't make curve with singleton
-for (i in 1:length(otuless)) {
-  temp<-lessdata_Hawaii_haplo[(lessdata_Hawaii_haplo$OTU == otuless[i]),]
-  temp2<-nrow(temp)
-  if(temp2<3){lessdata_Hawaii_haplo<-lessdata_Hawaii_haplo[(lessdata_Hawaii_haplo$OTU != otuless[i]),]}
-}
-#convert into right format for iNEXT,list and abundance counts per species for detections
-hap_test_Hawaii_abund <- split(lessdata_Hawaii_abund[c(2:25)], lessdata_Hawaii_abund$OTU) #convert to list by species
-hap_test_Hawaii_abund <-lapply(hap_test_Hawaii_abund,as.abucount)
-#convert into right format for iNEXT,list and incidence counts per species for haplotypes
-hap_test_Hawaii_haplo <- split(lessdata_Hawaii_haplo[c(2:25)], lessdata_Hawaii_haplo$OTU) #convert to list by species
-hap_test_Hawaii_haplo <-lapply(hap_test_Hawaii_haplo, as.incfreq)
-
-###########################
-#HAWAII PREVIOUS
-#Subset just species with previous data for them
-pastless_Hawaii<-lessdata_Hawaii
-for (i in 1:length(notpast)) {
-  pastless_Hawaii<-pastless_Hawaii[(pastless_Hawaii$OTU != notpast[i]),]
-}
-#FOR SPECIES DETECTIONS: remove rows with only 1 occurrence because can't make a curve with a singleton
-pastless_Hawaii_abund<-pastless_Hawaii[rowSums(pastless_Hawaii[2:25])>0,]
-otupast<-pastless_Hawaii_abund$OTU
-for (i in 1:length(otupast)) {
-  temp<-pastless_Hawaii_abund[(pastless_Hawaii_abund$OTU == otupast[i]),]
-  temp2<-sum(colSums(temp[2:25]))
-  if(temp2<2){pastless_Hawaii_abund<-pastless_Hawaii_abund[(pastless_Hawaii_abund$OTU != otupast[i]),]}
-}
-otupast<-unique(pastless_Hawaii_abund$OTU)
-pastless_Hawaii_abund_list<-data.frame(matrix(ncol = 25,nrow = 0))
-for (i in 1:length(otupast)) {
-  temp<-pastless_Hawaii_abund[(pastless_Hawaii_abund$OTU == otupast[i]),]
-  temp2<-colSums(temp[2:25])
-  temp3<-c(otupast[i],temp2)
-  pastless_Hawaii_abund_list<-rbind(pastless_Hawaii_abund_list,temp3)
-}
-#FOR HAPLOTYPE DETECTIONS
-#remove rows with 0 occurrences because they were only on other island
-pastless_Hawaii_haplo<-pastless_Hawaii[rowSums(pastless_Hawaii[2:25])>0,]
-otuless<-unique(pastless_Hawaii_haplo$OTU)
-#remove species with only 1 haplotype detected because can't make curve with singleton
-for (i in 1:length(otuless)) {
-  temp<-pastless_Hawaii_haplo[(pastless_Hawaii_haplo$OTU == otuless[i]),]
-  temp2<-nrow(temp)
-  if(temp2<2){pastless_Hawaii_haplo<-pastless_Hawaii_haplo[(pastless_Hawaii_haplo$OTU != otuless[i]),]}
-}
-#convert into right format for iNEXT,list and abundance counts per species for detections
-hap_test_Hawaii_prev_abund <- split(pastless_Hawaii_abund_list[c(2:25)], pastless_Hawaii_abund_list$X.OTU_1032.) #convert to list by species
-hap_test_Hawaii_prev_abund<-as.double(hap_test_Hawaii_prev_abund)
-#convert into right format for iNEXT,list and incidence counts per species for haplotypes
-hap_test_Hawaii_prev_haplo <- split(pastless_Hawaii_haplo[c(2:25)], pastless_Hawaii_haplo$OTU) #convert to list by species
-hap_test_Hawaii_prev_haplo <-lapply(hap_test_Hawaii_prev_haplo, as.incfreq)
-
-
-
-###########################
-#run iNEXT
-hap_test_Oahu_abund<-iNEXT(hap_test_Oahu_abund, q=0, datatype="abundance")
-hap_test_Oahu_haplo<-iNEXT(hap_test_Oahu_haplo, q=0, datatype="incidence_freq") 
-hap_test_Oahu_prev_abund<-iNEXT(hap_test_Oahu_prev_abund, q=0, datatype="abundance") 
-hap_test_Oahu_prev_haplo<-iNEXT(hap_test_Oahu_prev_haplo, q=0, datatype="incidence_freq")
-hap_test_Hawaii_abund<-iNEXT(hap_test_Hawaii_abund, q=0, datatype="abundance") 
-hap_test_Hawaii_haplo<-iNEXT(hap_test_Hawaii_haplo, q=0, datatype="incidence_freq") 
-hap_test_Hawaii_prev_abund<-iNEXT(hap_test_Hawaii_prev_abund, q=0, datatype="abundance") 
-hap_test_Hawaii_prev_haplo<-iNEXT(hap_test_Hawaii_prev_haplo, q=0, datatype="incidence_freq")
-
-###########################
-#plot
-jpeg(file=("/Users/taylorely/Documents/Grad_Work/Experimenting_with_other_filters/shum/cytb_iNEXT_Oahu_Haplotype_Accumulation.jpeg"), width=15, height=8, units = "in", res=400)
-haplo_sampling<-ggiNEXT(hap_test_Oahu_haplo, type=1)                       
-haplo_sampling + labs(x = "Samples Taken", y = "Haplotypes Sampled")
-dev.off()
-jpeg(file=("/Users/taylorely/Documents/Grad_Work/Experimenting_with_other_filters/shum/cytb_iNEXT_Oahu_Dections_Accumulation.jpeg"), width=15, height=8, units = "in", res=400)
-haplo_sampling<-ggiNEXT(hap_test_Oahu_abund, type=1)                       
-haplo_sampling + labs(x = "Samples Taken", y = "Haplotypes Sampled")
-dev.off()
-
-jpeg(file=("/Users/taylorely/Documents/Grad_Work/Experimenting_with_other_filters/shum/cytb_iNEXT_Oahu_prev_Detections_Accumulation.jpeg"), width=15, height=8, units = "in", res=400)
-haplo_sampling_prev<-ggiNEXT(hap_test_Oahu_prev_abund, type=1)                       
-haplo_sampling_prev + labs(x = "Samples Taken", y = "Individuals Sampled") + xlim(0,100)
-dev.off()
-jpeg(file=("/Users/taylorely/Documents/Grad_Work/Experimenting_with_other_filters/shum/cytb_iNEXT_Oahu_prev_Haplotype_Accumulation.jpeg"), width=15, height=8, units = "in", res=400)
-haplo_sampling_prev<-ggiNEXT(hap_test_Oahu_prev_haplo, type=1)                       
-haplo_sampling_prev + labs(x = "Samples Taken", y = "Haplotypes Sampled") 
-dev.off()
-
-jpeg(file=("/Users/taylorely/Documents/Grad_Work/Experimenting_with_other_filters/shum/cytb_iNEXT_Hawaii_Haplotype_Accumulation.jpeg"), width=15, height=8, units = "in", res=400)
-haplo_sampling2<-ggiNEXT(hap_test_Hawaii_haplo, type=1)                       
-haplo_sampling2 + labs(x = "Samples Taken", y = "Haplotypes Sampled") 
-dev.off()
-jpeg(file=("/Users/taylorely/Documents/Grad_Work/Experimenting_with_other_filters/shum/cytb_iNEXT_Hawaii_Detections_Accumulation.jpeg"), width=15, height=8, units = "in", res=400)
-haplo_sampling2<-ggiNEXT(hap_test_Hawaii_abund, type=1)                       
-haplo_sampling2 + labs(x = "Samples Taken", y = "Haplotypes Sampled") 
-dev.off()
-
-jpeg(file=("/Users/taylorely/Documents/Grad_Work/Experimenting_with_other_filters/shum/cytb_iNEXT_Hawaii_prev_Haplotype_Accumulation.jpeg"), width=15, height=8, units = "in", res=400)
-haplo_sampling2_prev<-ggiNEXT(hap_test_Hawaii_prev_haplo, type=1)                       
-haplo_sampling2_prev + labs(x = "Samples Taken", y = "Haplotypes Sampled")
-dev.off()
-jpeg(file=("/Users/taylorely/Documents/Grad_Work/Experimenting_with_other_filters/shum/cytb_iNEXT_Hawaii_prev_Detections_Accumulation.jpeg"), width=15, height=8, units = "in", res=400)
-haplo_sampling2_prev<-ggiNEXT(hap_test_Hawaii_prev_abund, type=1)                       
-haplo_sampling2_prev + labs(x = "Samples Taken", y = "Haplotypes Sampled")
-dev.off()
-
-
-
-MMD_all(otu_remove_low,popgen,cytb)
-hapmap_all(otu_remove_low,popgen,cytb)
-
-
-
-
-
-
-############################################################
-##### figure out molluscs in COI testing ######
-############################################################
-setwd("/Users/taylorely/Documents/Grad_Work/Compare_12S_cytb_COI/COI/")
-COImolluscs<-read.csv("COI_zizka_r10_m90_haplotypes_raw.csv", stringsAsFactors=F)
-haps <- unique(COImolluscs$haplotype) #load a list of OTU numbers to refer to later
-i<-1
-
-otus2<-unique(COImolluscs$OTU) #get list of OTUs
-blast_lowest<-data.frame(matrix(ncol = 5, nrow = 0)) #create dataframe
-phylum<-c()
-i<-1 
-for (i in 1:length(otus2)) { # make a loop for getting lowest shared taxonomy from blast results
-  temp <- COImolluscs[COImolluscs$OTU==otus2[i],]
-  lowest<-c()
-  try(lowest<-lowest_common(temp$blastID,db="ncbi"),  silent = TRUE)
-  lowest<-append(lowest,c(0,0,0))
-  lowest[1]<-as.character(lowest[1])
-  try(phylum<-tax_name(sci = lowest[1], get = "phylum", db = "ncbi"), silent=TRUE)
-  phylum<-append(phylum,c(0,0,0))
-  blastlowest2<-c(otus2[i],lowest[1],lowest[2],lowest[3],phylum[3])
-  blastlowest2<-unname(blastlowest2)
-  blast_lowest<- rbind(blast_lowest,blastlowest2)
-}
-colnames(blast_lowest)<-c("OTU","name","rank","ID","phylum")
-combined3$blastlowest<-blast_lowest$name[match(combined3$OTU,blast_lowest$OTU)] 
-combined3$blastlowestid<-blast_lowest$ID[match(combined3$OTU,blast_lowest$OTU)] 
-combined3$blastlowestrank<-blast_lowest$rank[match(combined3$OTU,blast_lowest$OTU)] 
-combined3$phylum<-blast_lowest$phylum[match(combined3$OTU,blast_lowest$OTU)] 
-
-phyluminfo<-data.frame(matrix(ncol = 4, nrow = 0))
-for (i in 1:length(haps)){
-  Sys.sleep(10)
-  temp <- COImolluscs[COImolluscs$haplotype==haps[i],]
-  codes_ecotag<-temp$TaxID
-  codes_blast<-temp$blastID
-  names_ecotag<-id2name(codes_ecotag,db="ncbi")
-  names_blast<-id2name(codes_blast,db="ncbi")
-  try(listphylum_blast<-tax_name(sci = names_blast[[1]]$name, get = "phylum", db = "ncbi"), silent = TRUE)
-  listphylum_blast<-append(listphylum_blast,c(0,0,0))
-  try(listfamily_blast<-tax_name(sci = names_blast[[1]]$name, get = "family", db = "ncbi"), silent = TRUE)
-  listfamily_blast<-append(listfamily_blast,c(0,0,0))
-  try(listphylum_ecotag<-tax_name(sci = names_ecotag[[1]]$name, get = "phylum", db = "ncbi"), silent = TRUE)
-  listphylum_ecotag<-append(listphylum_ecotag,c(0,0,0))
-  try(listfamily_ecotag<-tax_name(sci = names_ecotag[[1]]$name, get = "family", db = "ncbi"), silent = TRUE)
-  listfamily_ecotag<-append(listfamily_ecotag,c(0,0,0))
-  newphy<-c(temp$OTU[1],temp$haplotype[1],listphylum_blast$phylum,listphylum_ecotag$phylum,listfamily_blast$phylum,listfamily_ecotag$phylum)
-  phyluminfo<-rbind(phyluminfo,newphy)
-}
-
-
-
-
-
-
-
-
-
-
-
-
-##############################################################################
-##### reduce some species in ee025 raw reads so that things will run ######
-##############################################################################
-setwd("/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025")
-ee025_rarefied<-read.csv("cytb_ee025_r10_m90_reads_rarefied.csv", stringsAsFactors=F)
-AcanigF_raw<-ee025_rarefied[ee025_rarefied$OTU=="OTU_495",]
-#reads<-AcanigF_raw[5:260]
-#reads_divided<-round(reads/3)
-#AcanigF_raw[5:260]<-round(AcanigF_raw[5:260]/8)
-
-readsmelt<-melt(AcanigF_raw, id.vars=c("X","sort","haplotype","OTU","sequences","best_identity","phylum","Order","Family","Genus","Scientific_name","blastlowest","blastpercent"))
-rarereadsmelt1<- readsmelt[readsmelt$value>0,]# remove rows without the haplotypes present
-rarereadsmelt1<-rarereadsmelt1[!is.na(rarereadsmelt1$value),]
-normreads<- as.data.frame(lapply(rarereadsmelt1, rep, rarereadsmelt1$value))
-normreads$site <- metadata1$Island[match(normreads$variable,metadata1$Samples)] # add island sampled from
-normreads$site<-as.factor(normreads$site) # make sure as factor
-normreads$region <- metadata1$Region[match(normreads$variable,metadata1$Samples)] # add hilo/kona sampled from
-normreads$region<-as.factor(normreads$region) # make sure as factor
-normreads$sample <- metadata1$Location[match(normreads$variable,metadata1$Samples)] # add hilo/kona sampled from
-normreads$sample <-as.factor(normreads$sample)
-
-alignment1<-read.fasta("cytb_ee025_r10_m90haplotypes.fasta")
-#REMOVE SEQs WITH STOP CODONS
-#remove sequences with stop codons as they are errors, psuedogenes, or numts
-i<-1
-id_stopcodons<-c()
-for (i in 1:length(alignment1)) {
-  temp<-alignment1[[i]]
-  temp2<-paste(temp,collapse = "")
-  temp3<-s2c(temp2)
-  codons<-seqinr::translate(temp3, frame=0, numcode = 2)
-  stopc<-grepl("[[:punct:]]",codons)
-  if(any(stopc=="TRUE")){
-    id<-names(alignment1)[i] 
-    id_stopcodons<-append(id_stopcodons,id)
-  }
-}
-if(length(id_stopcodons)!= 0){
-  for (i in 1:length(id_stopcodons)){
-    normreads_removestop<-normreads[(normreads$haplotype != id_stopcodons[i]),]
-  }}
-#write.csv(normreads_removestop,file = "Zebflav_rawreads_reducedby8.csv")
-
-
-geneticstatstable(folder = "/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee05",
-                  datafile = normreads_removestop,
-                  runname = "cytb_ee05_r10_m90_nSC_normalized_region_Zebraflav_reducedby8",
-                  popcolname = "region")
-
-
-#repeat this for popgen_r_regioncytb_r10_m95_nSC, popgen_pacytb_r10_m95_nSC, popgen_rcytb_r10_m95_nSC
-#popcolname is the name of the population column you want to test: for me "site" or "region"
-eDNA_haplotypes_pairphi(OTUvsspecies = "OTU",
-                        folder = "/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025",
-                        datafile = normreads_removestop,
-                        runname = "cytb_r10_m90_nSC_ee03_site_normalized_triobe",
-                        numperm = 1000,
-                        order = c("Kauai","Oahu","Maui","Hawaii"),
-                        nind=2,
-                        popcolname = "site",
-                        haplorestrict = FALSE
-)
-#GET OVERALL STATS PER SPECIES
-#statstable<-function(folder,datafile,runname,popcolname)
-statstable(folder = "/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee05",
-           datafile = normreads_removestop,
-           runname = "cytb_ee05_r10_m90_nSC_normalized_site_reduced_AcanigF",
-           popcolname = "site")
-fastafilesperspecies(datafile=normreads_removestop,
-                     popcolname="region",
-                     runname="cytb_r10_m90_nSC_ee025_site_s_Zebflav_reduced",
-                     folder="/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/obitools/maxee025"
-)
 
