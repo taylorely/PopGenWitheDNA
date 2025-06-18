@@ -1,3 +1,7 @@
+#this file is to create haplotype pie charts and networks that use the same colors for the same haplotypes found with both eDNA and tissue-based methods
+#this file also makes the stacked bar plot for both methods
+
+#load library
 library("ape")
 library("pegas")
 library("ggplot2")
@@ -9,6 +13,7 @@ library("stringr")
 library("RColorBrewer")
 library("graph4lg")
 
+#set working directory
 setwd("/Users/taylorely/Documents/Grad_Work/ProcessingSequences/MHI/Hapmaps")
 
 #functions
@@ -537,18 +542,17 @@ sharedhaplotable<-function(eDNAdata, sangerdata, OTUnum, speciesname,eDNAproxy){
 }
 
 
-#load data
+#load data: these are the outpur files from the summary_eDNA function from the geneticdiversity file
 popgen_pa<-read.csv("cytb_ee025_r10_m90_nSC_popgen_pa.csv", stringsAsFactors = F)
 popgen_r<-read.csv("cytb_ee025_r10_m90_nSC_popgen_r.csv", stringsAsFactors = F)
 popgen_n<-read.csv("cytb_ee025_r10_m90_nSC_popgen_n.csv", stringsAsFactors = F)
 popgen_n_reduced<-read.csv("cytb_ee025_rawpopgen_noSC_reduced.csv", stringsAsFactors = F)
 
+#these are fasta files from previous papers shortened to the same 234 bp that eDNA used
 reformat(filepath = "Abuabd_short.fasta",speciesname = "Abudefduf_abdominalis",removefirst = TRUE,sangerlength = "short")
 reformat(filepath = "Abuvai_short.fasta",speciesname = "Abudefduf_vaigiensis",removefirst = TRUE,sangerlength = "short")
 reformat(filepath = "Acanig_short.fasta",speciesname = "Acanthurus_nigrofuscus",removefirst = TRUE,sangerlength = "short")
 reformat(filepath = "Acanthurus_nigroris_short.fasta",speciesname = "Acanthurus_nigroris",removefirst = FALSE,sangerlength = "short")
-#reformat(filepath = "Cepharg_short.fasta",speciesname = "Cephalopholis_argus",removefirst = FALSE,sangerlength = "short")
-#reformat(filepath = "Chae_lun_shorter.fasta",speciesname = "Chaetodon_lunulatus",removefirst = FALSE)
 reformat(filepath = "Chafre_short.fasta",speciesname = "Chaetodon_fremblii",removefirst = FALSE,sangerlength = "short")
 reformat(filepath = "Chamul_short.fasta",speciesname = "Chaetodon_multicinctus",removefirst = FALSE,sangerlength = "short")
 reformat(filepath = "Chamil_short.fasta",speciesname = "Chaetodon_miliaris",removefirst = FALSE,sangerlength = "short")
@@ -610,31 +614,6 @@ sharedhaplotable(eDNAdata = popgen_n_reduced,
                  OTUnum="OTU_33",
                  speciesname="Acanthurus_nigrofuscus",
                  eDNAproxy="raw")
-temp <- popgen_r[popgen_r$OTU== "OTU_33",]
-temp2<-temp[,c("sequences","region")]
-y <- as.list(temp2$sequences)
-y <- as.DNAbin(ape::as.alignment(y))
-h <- pegas::haplotype(y)
-net <- haploNet(h)
-net[,3] <- net[,3] #-1
-# print.default(net)
-R<-haploFreq(y, fac = c(temps2$region),haplo = h)
-png(file="hapmaps_w_pie_rawreads/AnigF_nopops_hapmap_eDNA2.jpg", width=10, height=10, units = "in", res=400,bg="transparent")
-setHaploNetOptions(labels = FALSE,haplotype.inner.color = "lightgrey",link.width = 3, mutations.sequence.length = 50,link.width.alt=0.0001)
-plot(net, size= attr(net, "freq"),scale.ratio = 5, fast = TRUE) #scale.ratio = 2,
-dev.off()
-
-y2 <- as.list(sangerAcanthurus_nigrofuscus$sequences)
-y2 <- as.DNAbin(ape::as.alignment(y2))
-h2 <- pegas::haplotype(y2)
-net2 <- haploNet(h2)
-net2[,3] <- net2[,3] #-1
-# print.default(net)
-R2<-haploFreq(y2, fac = c(sangerAcanthurus_nigrofuscus$site), haplo = h2)
-png(file="hapmaps_w_pie_rawreads/AnigF_nopops_hapmap_sanger2.jpg", width=10, height=10, units = "in", res=400,bg="transparent")
-setHaploNetOptions(labels = FALSE,haplotype.inner.color = "lightgrey",link.width = 2, mutations.sequence.length = 50,link.width.alt=0.0001)
-plot(net2, size= attr(net2, "freq"), scale.ratio = 5, cex = 0.8, fast = TRUE)
-dev.off()
 #Acanthurus nigroris
 hap_pie(eDNAdata = popgen_r,
         sangerdata = sangerAcanthurus_nigroris,
@@ -652,12 +631,6 @@ sharedhaplotable(eDNAdata = popgen_n_reduced,
                  OTUnum="OTU_80",
                  speciesname="Acanthurus_nigroris",
                  eDNAproxy="raw")
-#Cephalopholis argus
-hap_pie(eDNAdata = popgen_r,
-        sangerdata = sangerCephalopholis_argus,
-        OTUnum = "OTU_554",
-        speciesname = "Cephalopholis_argus",
-        folder = "hapmaps_w_pie")
 #Chaetodon fremblii
 hap_pie(eDNAdata = popgen_r,
         sangerdata = sangerChaetodon_fremblii,
@@ -704,31 +677,6 @@ sharedhaplotable(eDNAdata = popgen_n_reduced,
                  OTUnum="OTU_568",
                  speciesname="Chaetodon_miliaris",
                  eDNAproxy="raw")
-temp <- popgen_r[popgen_r$OTU== "OTU_568",]
-temp2<-temp[,c("sequences","region")]
-y <- as.list(temp2$sequences)
-y <- as.DNAbin(ape::as.alignment(y))
-h <- pegas::haplotype(y)
-net <- haploNet(h)
-net[,3] <- net[,3] #-1
-# print.default(net)
-png(file="hapmaps_w_pie_rawreads/Cmili_nopops_hapmap_eDNA.jpg", width=10, height=10, units = "in", res=400,bg="transparent")
-setHaploNetOptions(labels = FALSE,haplotype.inner.color = "lightgrey",link.width = 3, mutations.sequence.length = 50,link.width.alt=0.0001)
-plot(net, size= attr(net, "freq"),scale.ratio = 5, fast = TRUE) #scale.ratio = 2,
-dev.off()
-
-y2 <- as.list(sangerChaetodon_miliaris$sequences)
-y2 <- as.DNAbin(ape::as.alignment(y2))
-h2 <- pegas::haplotype(y2)
-net2 <- haploNet(h2)
-net2[,3] <- net2[,3] #-1
-# print.default(net)
-R2<-haploFreq(y2, fac = c(sangerChaetodon_miliaris$site), haplo = h2)
-png(file="hapmaps_w_pie_rawreads/Cmili_nopops_hapmap_sanger2.jpg", width=10, height=10, units = "in", res=400,bg="transparent")
-setHaploNetOptions(labels = FALSE,haplotype.inner.color = "lightgrey",link.width = 2, mutations.sequence.length = 50,link.width.alt=0.0001)
-plot(net2, size= attr(net2, "freq"), scale.ratio = 5, cex = 0.8, fast = TRUE)
-dev.off()
-
 #Chromis vanderbilti
 hap_pie(eDNAdata = popgen_r,
         sangerdata = sangerChromis_vanderbilti,
